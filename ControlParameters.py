@@ -23,7 +23,7 @@ def default_c_p():
     """
     c_p = {
            'program_running': True,
-           'mouse_params': [0, 0, 0, 0, 0],  # [Mouse pressed?, x0, y0, x1, y1]
+           'mouse_params': [0, 0, 0, 0, 0],
            # Camera c_p
            'image': np.zeros([500, 500, 1]),
            'image_idx': 0, # Index of snapshot image
@@ -37,6 +37,7 @@ def default_c_p():
            'video_name': 'Video',
            'video_format': 'avi',
            'image_format': 'png',
+           'AOI':[0,1000,0,1000], # Area of interest of camera
            'recording_path': '../Example data/',
            'bitrate': '30000000', #'300000000',
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
@@ -96,6 +97,7 @@ class DataChannel:
     saving_toggled: bool = False
     max_len: int = 1000_000
     index: int = 1
+    full: bool = False # True if all elements have been filled
     max_retrivable: int = 1
     
     def put_data(self, d):
@@ -116,13 +118,14 @@ class DataChannel:
         if self.index+len(d) < self.max_len:
             self.data[self.index:self.index+len(d)] = d
             self.index += len(d)
-            if self.max_retrivable < self.max_len:
-               self.max_retrivable = self.index 
+            if not self.full:
+                self.max_retrivable = self.index 
         else:
             end_points = self.max_len - self.index
             self.data[-end_points:] = d[:end_points]
             self.index = len(d) - end_points
             self.data[:self.index] = d[end_points:]
+            self.full = True
             self.max_retrivable = self.max_len
 
     def get_data(self, nbr_points):
@@ -133,11 +136,45 @@ class DataChannel:
             ret = self.data[diff:self.index]
         else:
             ret = np.concatenate([self.data[diff:], self.data[:self.index]]).ravel()
-    #    tmp = np.concatenate([self.data[diff:], self.data[:self.index]]).ravel()
         if not len(ret) == nbr_points:
             return None
         return ret
- 
+
+    def get_data_spaced(self, nbr_points, spacing=1):
+        """
+        Function that returns nbr_points data with spacing as specified by spacing.
+        If there are not enough data it will return a lesser number of datapoints
+        keeping the specified spacing.
+
+        Parameters
+        ----------
+        nbr_points : TYPE int
+            DESCRIPTION. Maximum number of points to retrieve
+        spacing : TYPE, optional int
+            DESCRIPTION. The default is 1. Number of points between each desired
+            data points
+
+        Returns
+        -------
+        ret : TYPE np array
+            DESCRIPTION. Datapoints of channel
+
+        """
+        
+        nbr_points = min(nbr_points, self.max_retrivable)
+        diff = self.index-nbr_points
+        final = self.index
+        start = final - (final % spacing) - (nbr_points * spacing)
+        if diff > 0:
+            # Simple case
+            ret = self.data[start:final:spacing]
+        else:
+            last = (nbr_points*spacing+start)
+            ret = np.concatenate([self.data[start:-1:spacing],
+                                  self.data[final%spacing:last:spacing]]).ravel()
+
+        return ret
+
 def get_data_dicitonary():
     # TODO replace the entries with data channels
     data = {

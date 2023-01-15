@@ -197,7 +197,7 @@ class Worker(QThread):
                 Qt.AspectRatioMode.KeepAspectRatio,
             )
             # Give other things time to work, roughly 50 fps default.
-            sleep(0.02)
+            sleep(0.02) # Sets the FPS
             
             # Paint extra items on the screen
             self.qp = QPainter(picture)
@@ -225,13 +225,14 @@ class MainWindow(QMainWindow):
         # Start camera threads
         self.CameraThread = None
         try:
-            camera = BaslerCameras.BaslerCamera()
+            # camera = BaslerCameras.BaslerCamera()
             # TODO fix error of program not quitting when trying to connect to basler
             # camera if there is no camera connected.
             # camera = ThorlabsCameras.ThorlabsCamera()
-                
-            self.CameraThread = CameraThread(self.c_p, camera)
-            self.CameraThread.start()
+            camera = None
+            if camera is not None:
+                self.CameraThread = CameraThread(self.c_p, camera)
+                self.CameraThread.start()
         except Exception as E:
             print(f"Camera error!\n{E}")
         self.TemperatureThread = None

@@ -21,7 +21,7 @@ from random import randint
 import numpy as np
 from functools import partial
 
-
+# TODO adjust plot axis not working properly
 
 Colors = {
     'red': (255,0,0),
@@ -103,8 +103,10 @@ class PlotSubsamplehWindow(QWidget):
     def set_subsamples(self, subsamples):
         try:
             self.plot_data['sub_sample'][self.idx] = int(subsamples)
-            print(self.plot_data['sub_sample'])
+            #print(self.plot_data['sub_sample'])
         except Exception as E:
+            if len(self.plot_data['sub_sample']) == 0:
+                return
             print("Could not set plotting subsampler")
             print(E)
 
@@ -243,6 +245,11 @@ class PlotWindow(QMainWindow):
     
     # NOTE there was a bug in pyqtgraph 0.12.3 which made the window
     # crash when setting back auto zoom on the axis
+    
+    # TODO have the last point entered be a different color/size of the others
+    # TODO Have color of markers independent of color of the line between them
+    # TODO Make it possible to label the liveplots(instead of calling them just plot 0, plot 1 etc.
+    # TODO add legend.
     def __init__(self, c_p, data, x_keys, y_keys):
         super().__init__()
 
@@ -274,7 +281,7 @@ class PlotWindow(QMainWindow):
         self.data_lines.append(self.graphWidget.plot(self.x, self.y2, pen=self.pen2, symbolPen ='w'))
 
         self.timer = QTimer()
-        self.timer.setInterval(50) # 20 fps
+        self.timer.setInterval(50) # sets the fps of the timer
         self.timer.timeout.connect(self.update_plot_data)
         
         self.toolbar = QToolBar("Main tools")
@@ -466,9 +473,14 @@ class PlotWindow(QMainWindow):
                 S = int(self.plot_data['sub_sample'][idx])
 
                 try:
-                    x_data = self.data[x_key].get_data(L)
-                    y_data = self.data[y_key].get_data(L)
-                    self.data_lines[idx].setData(x_data[0:-1:S],y_data[0:-1:S])
+                    # x_data = self.data[x_key].get_data(L)
+                    # y_data = self.data[y_key].get_data(L)
+                    # self.data_lines[idx].setData(x_data[0:-1:S],y_data[0:-1:S])
+                    nbr_elements = int(L/S)
+                    x_data = self.data[x_key].get_data_spaced(nbr_elements, S)
+                    y_data = self.data[y_key].get_data_spaced(nbr_elements, S)
+                    m_l = min(len(x_data), len(y_data))
+                    self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
 
                 except Exception as e:
                     print(x_key, y_key)
