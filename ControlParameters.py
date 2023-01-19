@@ -25,7 +25,7 @@ def default_c_p():
            'program_running': True,
            'mouse_params': [0, 0, 0, 0, 0],
            # Camera c_p
-           'image': np.zeros([500, 500, 1]),
+           'image': np.ones([500, 500]),#, 1]),
            'image_idx': 0, # Index of snapshot image
            'color': "mono",  # Options are mono and color # Maybe add bit depth too
            'new_settings_camera': [False, None],
@@ -37,6 +37,8 @@ def default_c_p():
            'video_name': 'Video',
            'video_format': 'avi',
            'image_format': 'png',
+           'image_gain': 1,
+           'image_offset': 0,
            'AOI':[0,1000,0,1000], # Area of interest of camera
            'recording_path': '../Example data/',
            'bitrate': '30000000', #'300000000',
@@ -50,7 +52,15 @@ def default_c_p():
            'piezo_pos': [10,10,10],
            
            # PIC reader c_p
-           'pic_channels': ['PSD_pA_x1','PSD_pA_x2','PSD_pA_y1', 'PSD_pA_y2'],
+           # TODO add all the necessary channels here. PSDs and motors.
+           'pic_channels':['Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+                           'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
+                           'PSD_pA_X_diff', 'PSD_pA_Y_diff', 'PSD_pA_sum'],
+           
+           # Motor output
+           'motor_x_target_speed': 0,
+           'motor_y_target_speed': 0,
+           'motor_z_target_speed': 0,
            }
     return c_p
 
@@ -192,6 +202,12 @@ def get_data_dicitonary():
     return data
 
 def get_data_dicitonary_new():
+    """
+    ['PSD_pA_x1','bits'],
+    ['PSD_pA_x2','bits'],
+    ['PSD_pA_y1','bits'],
+    ['PSD_pA_y2','bits'],
+    """
     # TODO replace the entries with data channels
     data = [['Time','(s)'],
     ['X-force','(pN)'],
@@ -202,10 +218,12 @@ def get_data_dicitonary_new():
     ['Y-position','(microns)'],
     ['Z-position','(microns)'],
     ['Temperature', 'Celsius'],
-    ['PSD_pA_x1','bits'],
-    ['PSD_pA_x2','bits'],
-    ['PSD_pA_y1','bits'],
-    ['PSD_pA_y2','bits'],
+    ['Motor_x_pos', 'ticks'],
+    ['Motor_y_pos','ticks'],
+    ['Motor_z_pos', 'ticks'],
+    ['Motor_x_speed','ticks/s'],
+    ['Motor_y_speed','ticks/s'],
+    ['Motor_z_speed','ticks/s'],
     ['PSD_pA_sum','bits'],
     ['PSD_pA_X_diff','bits'],
     ['PSD_pA_Y_diff','bits'],

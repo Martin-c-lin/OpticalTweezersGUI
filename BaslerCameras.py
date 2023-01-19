@@ -9,6 +9,7 @@ from CameraControlsNew import CameraInterface
 from pypylon import pylon  # For basler camera, maybe move that out of here
 from time import sleep
 
+
 class TimeoutException(Exception):
     print("Timeout of camera!")
 
@@ -45,12 +46,11 @@ class BaslerCamera(CameraInterface):
             self.cam = None
             print(ex)
             return False
-
+        
     def disconnect_camera(self):
         self.stop_grabbing()
         self.cam.Close()
         self.cam = None
-
     def stop_grabbing(self):
         try:
             self.cam.StopGrabbing()

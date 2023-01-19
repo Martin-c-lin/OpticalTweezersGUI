@@ -473,9 +473,6 @@ class PlotWindow(QMainWindow):
                 S = int(self.plot_data['sub_sample'][idx])
 
                 try:
-                    # x_data = self.data[x_key].get_data(L)
-                    # y_data = self.data[y_key].get_data(L)
-                    # self.data_lines[idx].setData(x_data[0:-1:S],y_data[0:-1:S])
                     nbr_elements = int(L/S)
                     x_data = self.data[x_key].get_data_spaced(nbr_elements, S)
                     y_data = self.data[y_key].get_data_spaced(nbr_elements, S)
@@ -511,4 +508,8 @@ class PlotWindow(QMainWindow):
     def __del__(self):
         for widget in self.sub_widgets:
             widget.close()
+    def close(self):
+        for widget in self.sub_widgets:
+            widget.close()
+        super().close()
         

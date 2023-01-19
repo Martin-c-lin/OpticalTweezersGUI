@@ -15,7 +15,7 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QRunnable, QObject, QPoint, QRect, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen, QIntValidator
 
 from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
@@ -27,35 +27,35 @@ from CameraControlsNew import CameraThread, VideoWriterThread
 from ControlParameters import default_c_p, get_data_dicitonary_new
 from TemperatureControllerTED4015 import TemperatureThread
 from TemperatureControllerWidget import TempereatureControllerWindow
-from ReadPicUart import PicReader
+from ReadPicUart import PicReader, PicWriter
 from LivePlots import PlotWindow
 from SaveDataWidget import SaveDataWindow
 import numpy as np
 from time import sleep
 from functools import partial
-
 from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
+import MotorControlWidget
 
-class WorkerSignals(QObject):
-    '''
-    Defines the signals available from a running worker thread.
+#class WorkerSignals(QObject):
+'''
+Defines the signals available from a running worker thread.
 
-    Supported signals are:
+Supported signals are:
 
-    finished
-        No data
+finished
+    No data
 
-    error
-        tuple (exctype, value, traceback.format_exc() )
+error
+    tuple (exctype, value, traceback.format_exc() )
 
-    result
-        object data returned from processing, anything
+result
+    object data returned from processing, anything
 
-    '''
-    finished = pyqtSignal()
-    error = pyqtSignal(tuple)
-    result = pyqtSignal(object)
+'''
+ #   finished = pyqtSignal()
+  #  error = pyqtSignal(tuple)
+   # result = pyqtSignal(object)
 
 class Worker(QThread):
     '''
@@ -81,49 +81,13 @@ class Worker(QThread):
         self.args = args
         self.kwargs = kwargs
         self.test_mode = test_mode
-        self.signals = WorkerSignals()
+        # self.signals = WorkerSignals()
 
     def testDataUpdate(self, max_length=10_000):
         # Fill data dicitonary with fake data to test the interface.
         # Used only for testing
-        """
-        # Old version
-        if len(self.data_channels['Time'].data) < max_length:
-            self.dt = 1000/max_length
-            self.data_channels['Time'].data = np.linspace(0, 1000, num=max_length)
-            self.data_channels['Y-force'].data = np.sin(self.data_channels['Time'].data / 10)
-            self.data_channels['X-force'].data = np.cos(self.data_channels['Time'].data / 10)
-            self.data_channels['Z-force'].data = np.cos(self.data_channels['Time'].data / 10)**2
-            self.data_channels['X-position'].data = np.random.rand(max_length) * 2 - 1
-            self.data_channels['Y-position'].data = np.random.rand(max_length) * 2 - 1
-            self.data_channels['Z-position'].data = np.random.rand(max_length) * 2 - 1
-            self.data_channels['Motor_position'].data = np.sin(self.data_channels['Time'].data / 10) + np.random.rand(max_length)
-        else:
-            # Shift the data
-            self.data_channels['Time'].data[:-1] = self.data_channels['Time'].data[1:]
-            self.data_channels['Y-force'].data[:-1] = self.data_channels['Y-force'].data[1:]
-            self.data_channels['X-force'].data[:-1] = self.data_channels['X-force'].data[1:]
-            self.data_channels['Z-force'].data[:-1] = self.data_channels['Z-force'].data[1:]
-            
-            self.data_channels['X-position'].data[:-1] = self.data_channels['X-position'].data[1:]
-            self.data_channels['Y-position'].data[:-1] = self.data_channels['Y-position'].data[1:]
-            self.data_channels['Z-position'].data[:-1] = self.data_channels['Z-position'].data[1:]
-            self.data_channels['Motor_position'].data[:-1] = self.data_channels['Motor_position'].data[1:]
-            
-            # Update last element
-            self.data_channels['Time'].data[-1] = self.data_channels['Time'].data[-1] + self.dt
-
-            self.data_channels['Y-force'].data[-1] = np.sin(self.data_channels['Time'].data[-1] / 10)
-            self.data_channels['X-force'].data[-1] = np.cos(self.data_channels['Time'].data[-1] / 10)
-            self.data_channels['Z-force'].data[-1] = np.cos(self.data_channels['Time'].data[-1] / 10)**2
-
-            self.data_channels['X-position'].data[-1] = np.random.rand() * 2 - 1
-            self.data_channels['Y-position'].data[-1] = np.random.rand() * 2 - 1
-            self.data_channels['Z-position'].data[-1] = np.random.rand() * 2 - 1
-            self.data_channels['Motor_position'].data[-1] = np.sin(self.data_channels['Time'].data[-1] / 10) + np.random.rand()
-        """
         self.dt = 1000/max_length
-        
+
         if len(self.data_channels['Time'].data) < max_length:
             self.data_channels['Time'].put_data(np.linspace(0, 1000, num=max_length))
             self.data_channels['Y-force'].put_data(np.sin(self.data_channels['Time'].data / 10))
@@ -146,25 +110,45 @@ class Worker(QThread):
             self.data_channels['Y-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Z-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Motor_position'].put_data((self.data_channels['Time'].get_data(1) / 10) + np.random.rand())
+
     def draw_particle_positions(self, centers):
         # TODO add function also for crosshair to help with alignment.
         for x, y in zip(centers):
             #self.brush.
             pass
+    
+    def preprocess_image(self):
+
+        # Check if offset and gain should be applied.
+        if self.c_p['image_offset'] != 0:
+            self.image += int(self.c_p['image_offset'])
+            
+        if self.c_p['image_gain'] != 1:
+            # TODO unacceptably slow
+            self.image = (self.image*self.c_p['image_gain'])
+
+        self.image = np.uint8(self.image)
+        s = np.shape(self.image)
+        if len(s) < 3 or s[2] == 1:
+            new_image = np.uint8(np.zeros([s[0], s[1], 3]))
+            # TODO check if we can do this more efficiently
+            new_image [:,:,0] = self.image
+            new_image [:,:,1] = self.image
+            new_image [:,:,2] = self.image
+            self.image = new_image
 
     def draw_central_circle(self):
         self.blue_pen.setColor(QColor('blue'))
         # self.qp.setPen(QPen(QColor('blue')))
         cx = int((self.c_p['camera_width']/2 - self.c_p['AOI'][0])/self.c_p['image_scale'])
         cy = int((self.c_p['camera_height']/2 - self.c_p['AOI'][2])/self.c_p['image_scale'])
-        # TODO find out why there seem to be a small offset in the position of this
-        # and fix so that the scale changes when zooming in.
         rx=50
         ry=50
         self.qp.drawEllipse(cx-int(rx/2)-1, cy-int(ry/2)-1, rx, ry)
 
     def run(self):
 
+        # Initialize pens to draw on the images
         self.blue_pen = QPen()
         self.blue_pen.setColor(QColor('blue'))
         self.blue_pen.setWidth(2)
@@ -176,21 +160,22 @@ class Worker(QThread):
             if self.test_mode:
                 self.testDataUpdate()
 
-            self.image = self.c_p['image']
-            # self.image[int(self.image.shape[0]/2), int(self.image.shape[1]/2),:] = [250,250,250]
+            self.image = np.array(self.c_p['image'])
+            self.preprocess_image()
             W, H = self.c_p['frame_size']
             self.c_p['image_scale'] = max(self.image.shape[1]/W, self.image.shape[0]/H)
             # It is quite sensitive to the format here, won't accept any missmatch
+            """
             if len(np.shape(self.image)) < 3:
                 convertToQtFormat = QImage(self.image, self.image.shape[1],
                                        self.image.shape[0],
                                        QImage.Format.Format_Grayscale8)
             else:
                 # TODO have the image always generated as a rgb image.
-                convertToQtFormat = QImage(self.image, self.image.shape[1],
-                                       self.image.shape[0],
-                                       QImage.Format.Format_RGB888)
-                # Different format needed for color image, needs fixing.
+                """
+            convertToQtFormat = QImage(self.image, self.image.shape[1],
+                                   self.image.shape[0],
+                                   QImage.Format.Format_RGB888)
             
             picture = convertToQtFormat.scaled(
                 W,H,
@@ -225,11 +210,12 @@ class MainWindow(QMainWindow):
         # Start camera threads
         self.CameraThread = None
         try:
-            # camera = BaslerCameras.BaslerCamera()
+            camera = None
+            camera = BaslerCameras.BaslerCamera()
             # TODO fix error of program not quitting when trying to connect to basler
             # camera if there is no camera connected.
             # camera = ThorlabsCameras.ThorlabsCamera()
-            camera = None
+            
             if camera is not None:
                 self.CameraThread = CameraThread(self.c_p, camera)
                 self.CameraThread.start()
@@ -254,6 +240,9 @@ class MainWindow(QMainWindow):
         try:
             self.PICReaderT = PicReader(self.c_p, self.data_channels)
             self.PICReaderT.start()
+            sleep(0.1)
+            self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
+            self.PICWriterT.start()
         except Exception as E:
             print(E)
 
@@ -277,7 +266,8 @@ class MainWindow(QMainWindow):
         th.start()
 
         # Create toolbar
-        self.create_toolbar()
+        #self.create_camera_toolbar()
+        create_camera_toolbar_external(self)
         # Create menu
         self.create_filemenu()
         self.show()
@@ -289,16 +279,64 @@ class MainWindow(QMainWindow):
     def start_threads(self):
         pass
         
-    def create_toolbar(self):
-        toolbar = QToolBar("Main tools")
-        self.addToolBar(toolbar)
-        self.add_default_actions(toolbar) # TODO create toolbar in a neater way
+    def create_camera_toolbar(self):
+        self.camera_toolbar = QToolBar("Camera tools")
+        self.addToolBar(self.camera_toolbar)
+        # self.add_camera_actions(self.camera_toolbar)
+        self.zoom_action = QAction("Zoom out", self)
+        self.zoom_action.setToolTip("Resets the field of view of the camera.")
+        self.zoom_action.triggered.connect(self.ZoomOut)
+        self.zoom_action.setCheckable(False)
 
+        self.record_action = QAction("Record video", self)
+        self.record_action.setToolTip("Turn ON recording.")
+        self.record_action.setShortcut('Ctrl+R')
+        self.record_action.triggered.connect(self.ToggleRecording)
+        self.record_action.setCheckable(True)
+
+        self.snapshot_action = QAction("Snapshot", self)
+        self.snapshot_action.setToolTip("Take snapshot of camera view.")
+        self.snapshot_action.setShortcut('Shift+S')
+        self.snapshot_action.triggered.connect(self.snapshot)
+        self.snapshot_action.setCheckable(False)
+
+        self.open_plot_window = QAction("Open plotter", self)
+        self.open_plot_window.setToolTip("Open live plotting window.")
+        self.open_plot_window.triggered.connect(self.show_new_window)
+        self.open_plot_window.setCheckable(False)
+
+        self.set_exp_tim = QAction("Set exposure time", self)
+        self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
+        self.set_exp_tim.triggered.connect(self.set_exposure_time)
+        self.set_exp_tim.setCheckable(False)
+        
+        self.camera_toolbar.addAction(self.zoom_action)
+        self.camera_toolbar.addAction(self.record_action)
+        self.camera_toolbar.addAction(self.snapshot_action)
+        
         self.exposure_time_LineEdit = QLineEdit()
         self.exposure_time_LineEdit.setValidator(QDoubleValidator(0.99,99.99,2))
         self.exposure_time_LineEdit.setText(str(self.c_p['exposure_time']))
-        toolbar.addWidget(self.exposure_time_LineEdit)
-        toolbar.addAction(self.set_exp_tim)
+        self.camera_toolbar.addWidget(self.exposure_time_LineEdit)
+        self.camera_toolbar.addAction(self.set_exp_tim)
+
+        # TODO add offset and label to this        
+        self.gain_LineEdit = QLineEdit()
+        self.gain_LineEdit.setToolTip("Set software gain on displayed image.")
+        self.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
+        self.gain_LineEdit.setText(str(self.c_p['image_gain']))
+        self.gain_LineEdit.setText(str(self.c_p['motor_x_target_speed']))
+        self.gain_LineEdit.textChanged.connect(self.set_gain)
+        self.camera_toolbar.addWidget(self.gain_LineEdit)
+
+    def set_gain(self, gain):
+        try:
+            g = min(float(gain), 255)
+            self.c_p['image_gain'] = g
+            print(f"Gain is now {gain}")
+        except ValueError:
+            # Harmless, someone deleted all the numbers
+            pass
 
     def create_filemenu(self):
         self.menu = self.menuBar()
@@ -335,7 +373,7 @@ class MainWindow(QMainWindow):
         set_save_action.triggered.connect(self.set_save_path)
         file_menu.addAction(set_save_action)
 
-    def add_default_actions(self, toolbar):
+    def add_camera_actions(self, toolbar):
         # TODO add action config function so one can easily choose which functions to include
         self.zoom_action = QAction("Zoom out", self)
         self.zoom_action.setToolTip("Resets the field of view of the camera.")
@@ -358,8 +396,12 @@ class MainWindow(QMainWindow):
         self.open_plot_window.setToolTip("Open live plotting window.")
         self.open_plot_window.triggered.connect(self.show_new_window)
         self.open_plot_window.setCheckable(False)
+        
+        self.test_led = QAction("Toggle led1", self)
+        self.test_led.setToolTip("Turn on/off led1 on the controller.")
+        self.test_led.triggered.connect(self.toggle_led)
+        self.test_led.setCheckable(True)
 
-        """
         self.open_temperature = QAction("Temperature control", self)
         self.open_temperature.setToolTip("Open temperature control window.")
         self.open_temperature.triggered.connect(self.OpenTemperatureWindow)
@@ -374,7 +416,6 @@ class MainWindow(QMainWindow):
         self.open_data_window.setToolTip("Open data control window")
         self.open_data_window.triggered.connect(self.DataWindow)
         self.open_data_window.setCheckable(False)
-        """
         self.set_exp_tim = QAction("Set exposure time", self)
         self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
         self.set_exp_tim.triggered.connect(self.set_exposure_time)
@@ -383,12 +424,23 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self.zoom_action)
         toolbar.addAction(self.record_action)
         toolbar.addAction(self.snapshot_action)
+        toolbar.addAction(self.test_led)
         # toolbar.addAction(self.open_temperature)
         # toolbar.addAction(self.open_data_window)
-
+        
     def set_video_format(self, video_format):
         self.c_p['video_format'] = video_format
 
+    def toggle_led(self):
+        # TestFunction
+        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p)
+        self.MCW.show()
+        """
+        if self.c_p['motor_x_target_speed'] < 0:
+            self.c_p['motor_x_target_speed'] = 2
+        else:
+            self.c_p['motor_x_target_speed'] = -2
+        """
     def set_image_format(self, image_format):
         self.c_p['image_format'] = image_format
         
@@ -515,6 +567,7 @@ class MainWindow(QMainWindow):
         self.data_window.show()
 
     def closeEvent(self, event):
+        # TODO close also other widgets here
         if self.plot_windows is not None:
             for w in self.plot_windows:
                 w.close()
@@ -527,14 +580,73 @@ class MainWindow(QMainWindow):
             self.CameraThread.join()
         if self.TemperatureThread is not None:
             self.TemperatureThread.join()
-        if self.self.PICReaderT is not None:
+        if self.PICReaderT is not None:
             self.PICReaderT.join()
+        if self.PICWriterT is not None:
+            self.PICWriterT.join()
 
         self.VideoWriterThread.join()
+
+def create_camera_toolbar_external(main_window):
+    # TODO do not have this as an external function, urk
+    main_window.camera_toolbar = QToolBar("Camera tools")
+    main_window.addToolBar(main_window.camera_toolbar)
+
+    # Add test button for led
+    main_window.test_led = QAction("Toggle led1", main_window)
+    main_window.test_led.setToolTip("Turn on/off led1 on the controller.")
+    main_window.test_led.triggered.connect(main_window.toggle_led)
+    main_window.test_led.setCheckable(True)
+    main_window.camera_toolbar.addAction(main_window.test_led)
+
+    # main_window.add_camera_actions(main_window.camera_toolbar)
+    main_window.zoom_action = QAction("Zoom out", main_window)
+    main_window.zoom_action.setToolTip("Resets the field of view of the camera.")
+    main_window.zoom_action.triggered.connect(main_window.ZoomOut)
+    main_window.zoom_action.setCheckable(False)
+
+    main_window.record_action = QAction("Record video", main_window)
+    main_window.record_action.setToolTip("Turn ON recording.")
+    main_window.record_action.setShortcut('Ctrl+R')
+    main_window.record_action.triggered.connect(main_window.ToggleRecording)
+    main_window.record_action.setCheckable(True)
+
+    main_window.snapshot_action = QAction("Snapshot", main_window)
+    main_window.snapshot_action.setToolTip("Take snapshot of camera view.")
+    main_window.snapshot_action.setShortcut('Shift+S')
+    main_window.snapshot_action.triggered.connect(main_window.snapshot)
+    main_window.snapshot_action.setCheckable(False)
+
+    main_window.open_plot_window = QAction("Open plotter", main_window)
+    main_window.open_plot_window.setToolTip("Open live plotting window.")
+    main_window.open_plot_window.triggered.connect(main_window.show_new_window)
+    main_window.open_plot_window.setCheckable(False)
+
+    main_window.set_exp_tim = QAction("Set exposure time", main_window)
+    main_window.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
+    main_window.set_exp_tim.triggered.connect(main_window.set_exposure_time)
+    main_window.open_plot_window.setCheckable(False)
+
+    main_window.camera_toolbar.addAction(main_window.zoom_action)
+    main_window.camera_toolbar.addAction(main_window.record_action)
+    main_window.camera_toolbar.addAction(main_window.snapshot_action)
+
+    main_window.exposure_time_LineEdit = QLineEdit()
+    main_window.exposure_time_LineEdit.setValidator(QDoubleValidator(0.99,99.99,2))
+    main_window.exposure_time_LineEdit.setText(str(main_window.c_p['exposure_time']))
+    main_window.camera_toolbar.addWidget(main_window.exposure_time_LineEdit)
+    main_window.camera_toolbar.addAction(main_window.set_exp_tim)
+
+    # TODO add offset and label to this        
+    main_window.gain_LineEdit = QLineEdit()
+    main_window.gain_LineEdit.setToolTip("Set software gain on displayed image.")
+    main_window.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
+    main_window.gain_LineEdit.setText(str(main_window.c_p['image_gain']))
+    main_window.gain_LineEdit.textChanged.connect(main_window.set_gain)
+    main_window.camera_toolbar.addWidget(main_window.gain_LineEdit)
 
 app = QApplication(sys.argv)
 w = MainWindow()
 w.show()
 app.exec()
 w.c_p['program_running'] = False
-# w.CameraThread.join()
