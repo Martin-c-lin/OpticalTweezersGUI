@@ -23,7 +23,9 @@ def default_c_p():
     """
     c_p = {
            'program_running': True,
-           'mouse_params': [0, 0, 0, 0, 0],
+           'mouse_params': [0, 0, 0, 0, 0, 0],
+           'click_tools': [],
+
            # Camera c_p
            'image': np.ones([500, 500]),#, 1]),
            'image_idx': 0, # Index of snapshot image
@@ -44,6 +46,8 @@ def default_c_p():
            'bitrate': '30000000', #'300000000',
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
            'image_scale': 1,
+           'microns_per_pix': 50/5000 * 1e-3, # 5000 pixels per 30 micron roughly, changed to have more movements
+
            # Temperature c_p
            'temperature_output_on':False,
            
@@ -61,43 +65,31 @@ def default_c_p():
            'motor_x_target_speed': 0,
            'motor_y_target_speed': 0,
            'motor_z_target_speed': 0,
-           }
+           
+           
+           # Thorlabs motors
+           'thorlabs_motor_threads': [],
+           'serial_nums_motors':["27502419","27502438",""], # Serial numbers of x,y, and z motors
+           'stepper_serial_no': '70167314',
+           'stepper_starting_position': [0, 0, 0],
+           #'stage_stepper_connected': [False, False, False],
+           'stepper_current_position': [0, 0, 0],
+           'stepper_target_position': [2.3, 2.3, 7],
+           'stepper_move_to_target': [False, False, False],
+           'stepper_next_move': [0, 0, 0],
+           'stepper_max_speed': [0.01, 0.01, 0.01],
+           'stepper_acc': [0.005, 0.005, 0.005],
+           'new_stepper_velocity_params': [False, False, False],
+           'connect_steppers': False, # Should steppers be connected?
+           'steppers_connected': [False, False, False], # Are the steppers connected?
+           'stepper_controller': None,
+           'polling_rate': 250,
+        }
     return c_p
 
 
 from dataclasses import dataclass
-"""
-# Old implementation of datachannel class
-@dataclass
-class DataChannel:
-    # TODO change data to a queue 
-    name: str
-    unit: str
-    data: np.array
-    saving_toggled: bool = False
-    max_len: int = 1000_000
-    index: int = 1
-    
-    def put_data(self, d):
-        # Check that it is correct length
-        if len(d)==1:
-            print(d)
-        if len(d) < 2:
-            # TODO fix error when d = 1
-            return
-        L = len(self.data) + len(d)
-        if L < self.max_len:
-            tmp = np.zeros(L)#[self.data[:], d])
-            tmp[:len(self.data)] = self.data
-            tmp[-len(d):] = d
-            self.data = tmp
-        else:
-            tmp = np.zeros(self.max_len)
-            diff = self.max_len - len(self.data)
-            tmp[:-len(d)] = self.data[len(d)-diff:] # Index error here before
-            tmp[-len(d):] = d
-            self.data = tmp
- """  
+
 @dataclass
 class DataChannel:
     # New faster implementation of data channel class

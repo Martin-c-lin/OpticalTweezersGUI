@@ -5,20 +5,22 @@ Created on Sun Jan 15 10:28:23 2023
 @author: marti
 """
 import abc
-from PyQt6.QtCore import Qt
 
 class MouseInterface(metaclass=abc.ABCMeta):
+    # TODO add id for each tool
     @classmethod
     def __subclasshook__(cls, subclass):
         # TODO Add a icon or similar bar
-        return (hasattr(subclass, 'mouseMoveEvent') and
-                callable(subclass.mouseMoveEvent) and
-                hasattr(subclass, 'mousePressEvent') and
-                callable(subclass.mousePressEvent) and
-                hasattr(subclass, 'mouseReleaseEvent') and
-                callable(subclass.mouseReleaseEvent) and
-                hasattr(subclass, 'mouseDoubleClickEvent') and
-                callable(subclass.mouseDoubleClickEvent) or
+        return (hasattr(subclass, 'mouseMove') and
+                callable(subclass.mouseMove) and
+                hasattr(subclass, 'mousePress') and
+                callable(subclass.mousePress) and
+                hasattr(subclass, 'mouseRelease') and
+                callable(subclass.mouseRelease) and
+                hasattr(subclass, 'draw') and
+                callable(subclass.draw) and
+                hasattr(subclass, 'mouseDoubleClick') and
+                callable(subclass.mouseDoubleClick) or
                 NotImplemented)
     
 

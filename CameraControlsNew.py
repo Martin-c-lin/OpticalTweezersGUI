@@ -15,6 +15,71 @@ from copy import copy, deepcopy
 # from queue import Queue
 import skvideo.io
 import numpy as np
+from CustomMouseTools import MouseInterface
+from PyQt6.QtGui import  QColor,QPen
+
+
+class CameraClicks(MouseInterface):
+    # TODO add measurements here
+    def __init__(self, c_p):
+        self.c_p = c_p
+        self.x_0 = 0
+        self.y_0 = 0
+        self.red_pen = QPen()
+        self.red_pen.setColor(QColor('red'))
+        self.red_pen.setWidth(2)
+
+    def draw(self, qp):
+        if self.c_p['mouse_params'][0] == 1:
+            # TODO use mouse params [0] to index different tools.
+            # self.qp.setBrush(QColor(255, 255, 0, 20))#self.br)
+            qp.setPen(self.red_pen)                
+            x1,y1,x2,y2 = self.c_p['mouse_params'][1:5]
+            qp.drawRect(x1,y1,x2-x1,y2-y1)
+            return
+
+    def mousePress(self):
+
+        # left click
+        if self.c_p['mouse_params'][0] == 1:
+            pass
+        # Right click -drag
+        if self.c_p['mouse_params'][0] == 2:
+            pass
+        
+    def mouseRelease(self):
+        if self.c_p['mouse_params'][0] != 1:
+            return
+        x0, y0, x1, y1 = self.c_p['mouse_params'][1:5]
+        dx = x1 - x0
+        dy = y1 - y0
+        if dx**2 < 100 or dy**2 < 100:
+            print(dx,dy)
+            return
+        left = int(x0 * self.c_p['image_scale'])
+        right = int(x1 *self.c_p['image_scale'])
+        if right < left:
+            tmp = right
+            right = left
+            left = tmp
+        up = int(y0 * self.c_p['image_scale'])
+        down = int(y1 * self.c_p['image_scale'])
+        if up < down:
+            tmp = up
+            up = down
+            down = tmp
+
+        self.c_p['AOI'] = [self.c_p['AOI'][0] + left,self.c_p['AOI'][0] + right,
+                           self.c_p['AOI'][2] + down,self.c_p['AOI'][2] + up]
+        self.c_p['new_settings_camera'] = [True, 'AOI']
+        
+    def mouseDoubleClick(self):
+        pass
+    
+    def mouseMove(self):
+        if self.c_p['mouse_params'][0] == 2:
+            pass
+        
 
 
 class CameraInterface(metaclass=abc.ABCMeta):

@@ -23,7 +23,7 @@ from random import randint
 
 import BaslerCameras
 import ThorlabsCameras
-from CameraControlsNew import CameraThread, VideoWriterThread
+from CameraControlsNew import CameraThread, VideoWriterThread, CameraClicks
 from ControlParameters import default_c_p, get_data_dicitonary_new
 from TemperatureControllerTED4015 import TemperatureThread
 from TemperatureControllerWidget import TempereatureControllerWindow
@@ -37,25 +37,6 @@ from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
 import MotorControlWidget
 
-#class WorkerSignals(QObject):
-'''
-Defines the signals available from a running worker thread.
-
-Supported signals are:
-
-finished
-    No data
-
-error
-    tuple (exctype, value, traceback.format_exc() )
-
-result
-    object data returned from processing, anything
-
-'''
- #   finished = pyqtSignal()
-  #  error = pyqtSignal(tuple)
-   # result = pyqtSignal(object)
 
 class Worker(QThread):
     '''
@@ -128,14 +109,6 @@ class Worker(QThread):
             self.image = (self.image*self.c_p['image_gain'])
 
         self.image = np.uint8(self.image)
-        s = np.shape(self.image)
-        if len(s) < 3 or s[2] == 1:
-            new_image = np.uint8(np.zeros([s[0], s[1], 3]))
-            # TODO check if we can do this more efficiently
-            new_image [:,:,0] = self.image
-            new_image [:,:,1] = self.image
-            new_image [:,:,2] = self.image
-            self.image = new_image
 
     def draw_central_circle(self):
         self.blue_pen.setColor(QColor('blue'))
@@ -161,23 +134,26 @@ class Worker(QThread):
                 self.testDataUpdate()
 
             self.image = np.array(self.c_p['image'])
-            self.preprocess_image()
             W, H = self.c_p['frame_size']
             self.c_p['image_scale'] = max(self.image.shape[1]/W, self.image.shape[0]/H)
+            self.preprocess_image()
+            
+
             # It is quite sensitive to the format here, won't accept any missmatch
-            """
+            
             if len(np.shape(self.image)) < 3:
-                convertToQtFormat = QImage(self.image, self.image.shape[1],
+                QT_Image = QImage(self.image, self.image.shape[1],
                                        self.image.shape[0],
                                        QImage.Format.Format_Grayscale8)
+                QT_Image = QT_Image.convertToFormat(QImage.Format.Format_RGB888)
             else:
                 # TODO have the image always generated as a rgb image.
-                """
-            convertToQtFormat = QImage(self.image, self.image.shape[1],
-                                   self.image.shape[0],
-                                   QImage.Format.Format_RGB888)
-            
-            picture = convertToQtFormat.scaled(
+                
+                QT_Image = QImage(self.image, self.image.shape[1],
+                                       self.image.shape[0],
+                                       QImage.Format.Format_RGB888)
+                
+            picture = QT_Image.scaled(
                 W,H,
                 Qt.AspectRatioMode.KeepAspectRatio,
             )
@@ -187,12 +163,7 @@ class Worker(QThread):
             # Paint extra items on the screen
             self.qp = QPainter(picture)
             # Draw zoom in rectangle
-            if self.c_p['mouse_params'][0]:
-                # TODO use mouse params [0] to index different tools.
-                # self.qp.setBrush(QColor(255, 255, 0, 20))#self.br)
-                self.qp.setPen(self.red_pen)                
-                x1,y1,x2,y2 = self.c_p['mouse_params'][1:5]
-                self.qp.drawRect(x1,y1,x2-x1,y2-y1)
+            self.c_p['click_tools'][self.c_p['mouse_params'][5]].draw(self.qp)
             self.qp.setPen(self.blue_pen)
             self.draw_central_circle()
             self.qp.end()
@@ -265,9 +236,16 @@ class MainWindow(QMainWindow):
         th.changePixmap.connect(self.setImage)
         th.start()
 
+        self.c_p['click_tools'].append(CameraClicks(self.c_p))
+        
+        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
+        self.c_p['mouse_params'][5] = 1 # Set motor tool as default
+
         # Create toolbar
         #self.create_camera_toolbar()
         create_camera_toolbar_external(self)
+        self.addToolBarBreak() 
+        self.create_mouse_toolbar()
         # Create menu
         self.create_filemenu()
         self.show()
@@ -278,6 +256,35 @@ class MainWindow(QMainWindow):
 
     def start_threads(self):
         pass
+    
+    def create_mouse_toolbar(self):
+        self.mouse_toolbar = QToolBar("Mouse tools")
+        self.addToolBar(self.mouse_toolbar)
+        
+        # TODO make the different tools checkable
+        self.set_camera_tool = QAction("Camera tool", self)
+        self.set_camera_tool.setToolTip("Use the mouse to zoom in on the screen.")
+        camera_action = partial(self.set_mouse_tool, 0)
+        self.set_camera_tool.triggered.connect(camera_action)
+        self.set_camera_tool.setCheckable(False)
+        
+        self.set_motor_tool = QAction("Motor action", self)
+        self.set_motor_tool.setToolTip("Use the mouse to move around in the sample by clicking or dragging.")
+        motor_command = partial(self.set_mouse_tool, 1)
+        self.set_motor_tool.triggered.connect(motor_command)
+        self.set_motor_tool.setCheckable(False)
+        
+        self.mouse_toolbar.addAction(self.set_camera_tool)
+        self.mouse_toolbar.addAction(self.set_motor_tool)
+
+
+        
+        
+    def set_mouse_tool(self, tool_no=0):
+        if tool_no<len(self.c_p['click_tools']):    
+            self.c_p['mouse_params'][5] = tool_no
+            print("Tool set to ", tool_no)
+        
         
     def create_camera_toolbar(self):
         self.camera_toolbar = QToolBar("Camera tools")
@@ -342,12 +349,12 @@ class MainWindow(QMainWindow):
         self.menu = self.menuBar()
 
         file_menu = self.menu.addMenu("File")
-        self.menu.addAction(self.open_plot_window)
         file_menu.addSeparator()
 
         # Create submenu for setting recording(video) format
         format_submenu = file_menu.addMenu("Recording format")
         video_formats = ['avi','mp4','npy']
+
         for f in video_formats :
 
             format_command= partial(self.set_video_format, f)
@@ -373,74 +380,34 @@ class MainWindow(QMainWindow):
         set_save_action.triggered.connect(self.set_save_path)
         file_menu.addAction(set_save_action)
 
-    def add_camera_actions(self, toolbar):
-        # TODO add action config function so one can easily choose which functions to include
-        self.zoom_action = QAction("Zoom out", self)
-        self.zoom_action.setToolTip("Resets the field of view of the camera.")
-        self.zoom_action.triggered.connect(self.ZoomOut)
-        self.zoom_action.setCheckable(False)
+        window_menu = self.menu.addMenu("Windows")
+        window_menu.addSeparator()
 
-        self.record_action = QAction("Record video", self)
-        self.record_action.setToolTip("Turn ON recording.")
-        self.record_action.setShortcut('Ctrl+R')
-        self.record_action.triggered.connect(self.ToggleRecording)
-        self.record_action.setCheckable(True)
-
-        self.snapshot_action = QAction("Snapshot", self)
-        self.snapshot_action.setToolTip("Take snapshot of camera view.")
-        self.snapshot_action.setShortcut('Shift+S')
-        self.snapshot_action.triggered.connect(self.snapshot)
-        self.snapshot_action.setCheckable(False)
-
-        self.open_plot_window = QAction("Open plotter", self)
+        self.open_plot_window = QAction("Live plotter", self)
         self.open_plot_window.setToolTip("Open live plotting window.")
         self.open_plot_window.triggered.connect(self.show_new_window)
         self.open_plot_window.setCheckable(False)
-        
-        self.test_led = QAction("Toggle led1", self)
-        self.test_led.setToolTip("Turn on/off led1 on the controller.")
-        self.test_led.triggered.connect(self.toggle_led)
-        self.test_led.setCheckable(True)
+        window_menu.addAction(self.open_plot_window)
 
-        self.open_temperature = QAction("Temperature control", self)
-        self.open_temperature.setToolTip("Open temperature control window.")
-        self.open_temperature.triggered.connect(self.OpenTemperatureWindow)
-        self.open_temperature.setCheckable(False)
-
-        self.open_PI_stage = QAction("PI stage", self)
-        self.open_PI_stage.setToolTip("Open Pi stage controls window.")
-        self.open_PI_stage.triggered.connect(self.OpenPIStage)
-        self.open_PI_stage.setCheckable(False)
         
-        self.open_data_window = QAction("Data window", self)
-        self.open_data_window.setToolTip("Open data control window")
-        self.open_data_window.triggered.connect(self.DataWindow)
-        self.open_data_window.setCheckable(False)
-        self.set_exp_tim = QAction("Set exposure time", self)
-        self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
-        self.set_exp_tim.triggered.connect(self.set_exposure_time)
-        self.open_plot_window.setCheckable(False)
+        self.open_motor_window = QAction("Motor window", self)
+        self.open_motor_window.setToolTip("Open window for manual motor control.")
+        self.open_motor_window.triggered.connect(self.open_motor_control_window)
+        self.open_motor_window.setCheckable(False)
+        window_menu.addAction(self.open_motor_window)
 
-        toolbar.addAction(self.zoom_action)
-        toolbar.addAction(self.record_action)
-        toolbar.addAction(self.snapshot_action)
-        toolbar.addAction(self.test_led)
-        # toolbar.addAction(self.open_temperature)
-        # toolbar.addAction(self.open_data_window)
-        
     def set_video_format(self, video_format):
         self.c_p['video_format'] = video_format
 
     def toggle_led(self):
+        # TODO rename this
         # TestFunction
-        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p)
+        pass
+
+    def open_motor_control_window(self):
+        self.MCW = MotorControlWidget.ThorlabsMotorWindow(self.c_p) #MotorControlWidget.MotorControllerWindow(self.c_p)
         self.MCW.show()
-        """
-        if self.c_p['motor_x_target_speed'] < 0:
-            self.c_p['motor_x_target_speed'] = 2
-        else:
-            self.c_p['motor_x_target_speed'] = -2
-        """
+
     def set_image_format(self, image_format):
         self.c_p['image_format'] = image_format
         
@@ -453,7 +420,8 @@ class MainWindow(QMainWindow):
         self.c_p['new_settings_camera'] = [True, 'exposure_time']
 
     def set_save_path(self):
-        fname = QFileDialog.getExistingDirectory(self,"Save path")
+        # TODO this does not work with python 3.8
+        fname = QFileDialog.getExistingDirectory(self, "Save path")
         if len(fname) > 3:
             self.c_p['recording_path'] = fname
 
@@ -492,44 +460,57 @@ class MainWindow(QMainWindow):
         self.c_p['frame_size'] = W, H
 
     def mouseMoveEvent(self, e):
+        # TODO handle different presses differently, left right and middle key
         self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
+        self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseMove()
+
 
     def mousePressEvent(self, e):
-        if e.button() == Qt.MouseButton.MiddleButton or \
-            e.button() == Qt.MouseButton.RightButton:
-            self.c_p['mouse_params'][0] = 0
-            return
+        
+        self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
+        self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
+
         if e.button() == Qt.MouseButton.LeftButton and not self.c_p['mouse_params'][0]:
             # handle the left-button press in here            if
             self.c_p['mouse_params'][0] = 1
-            self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
-            self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
+            # self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
+            # self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
+        if e.button() == Qt.MouseButton.RightButton:
+            self.c_p['mouse_params'][0] = 2
+        if e.button() == Qt.MouseButton.MiddleButton:
+            self.c_p['mouse_params'][0] = 3
+        self.c_p['click_tools'][self.c_p['mouse_params'][5]].mousePress()
 
     def mouseReleaseEvent(self, e):
 
-        if e.button() == Qt.MouseButton.MiddleButton or \
-            e.button() == Qt.MouseButton.RightButton or \
-            not self.c_p['mouse_params'][0]:
-            return
-        self.c_p['mouse_params'][0] = 0
+
         self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
+        self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseRelease()
+        self.c_p['mouse_params'][0] = 0
+
+        """
+        if e.button() == Qt.MouseButton.MiddleButton or \
+            e.button() == Qt.MouseButton.RightButton:
+            return
+
         x0, y0, x1, y1 = self.c_p['mouse_params'][1:5]
         dx = x1 - x0
         dy = y1 - y0
         if dx**2 < 100 or dy**2 < 100:
             print(dx,dy)
             return
-        self.image_scale = self.c_p['image_scale']
-        left = int(x0 * self.image_scale)
-        right = int(x1 *self.image_scale)
+
+        #self.c_p['image_scale'] = self.c_p['image_scale']
+        left = int(x0 * self.c_p['image_scale'])
+        right = int(x1 *self.c_p['image_scale'])
         if right < left:
             tmp = right
             right = left
             left = tmp
-        up = int(y0 * self.image_scale)
-        down = int(y1 * self.image_scale)
+        up = int(y0 * self.c_p['image_scale'])
+        down = int(y1 * self.c_p['image_scale'])
         if up < down:
             tmp = up
             up = down
@@ -539,12 +520,15 @@ class MainWindow(QMainWindow):
                            self.c_p['AOI'][2] + down,self.c_p['AOI'][2] + up]
         print("Udpating settings")
         self.c_p['new_settings_camera'] = [True, 'AOI']
+        """
 
     def mouseDoubleClickEvent(self, e):
         # Double click to move center?
         x = e.pos().x()-self.label.pos().x()
         y = e.pos().y()-self.label.pos().y()
         print(x*self.c_p['image_scale'] ,y*self.c_p['image_scale'] )
+        self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseDoubleClick()
+
 
     def show_new_window(self, checked):
         if self.plot_windows is None:
@@ -593,12 +577,13 @@ def create_camera_toolbar_external(main_window):
     main_window.addToolBar(main_window.camera_toolbar)
 
     # Add test button for led
+    """
     main_window.test_led = QAction("Toggle led1", main_window)
     main_window.test_led.setToolTip("Turn on/off led1 on the controller.")
     main_window.test_led.triggered.connect(main_window.toggle_led)
     main_window.test_led.setCheckable(True)
     main_window.camera_toolbar.addAction(main_window.test_led)
-
+    """
     # main_window.add_camera_actions(main_window.camera_toolbar)
     main_window.zoom_action = QAction("Zoom out", main_window)
     main_window.zoom_action.setToolTip("Resets the field of view of the camera.")
@@ -617,15 +602,9 @@ def create_camera_toolbar_external(main_window):
     main_window.snapshot_action.triggered.connect(main_window.snapshot)
     main_window.snapshot_action.setCheckable(False)
 
-    main_window.open_plot_window = QAction("Open plotter", main_window)
-    main_window.open_plot_window.setToolTip("Open live plotting window.")
-    main_window.open_plot_window.triggered.connect(main_window.show_new_window)
-    main_window.open_plot_window.setCheckable(False)
-
     main_window.set_exp_tim = QAction("Set exposure time", main_window)
     main_window.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
     main_window.set_exp_tim.triggered.connect(main_window.set_exposure_time)
-    main_window.open_plot_window.setCheckable(False)
 
     main_window.camera_toolbar.addAction(main_window.zoom_action)
     main_window.camera_toolbar.addAction(main_window.record_action)

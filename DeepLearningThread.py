@@ -39,6 +39,8 @@ class DeepLearningAnalyserLDS(Thread):
         self.model = model
         self.training_target_size = (64, 64)
         self.particle_type = particle_type # Type of particle to be tracked/analyzed
+        self.setDaemon(True)
+
 
     def train_new_model(self, training_data):
         """
