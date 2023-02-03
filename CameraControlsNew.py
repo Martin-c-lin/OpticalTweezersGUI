@@ -285,6 +285,7 @@ class VideoWriterThread(Thread):
         self.format = self.c_p['video_format']
         self.last_frame_format = self.format
         self.video_created = False
+        # TODO update video name to avoid overwriting old videos/photos
         self.video_name = self.c_p['video_name']
         self.frame_buffer = []
         self.frame_buffer_size = 100

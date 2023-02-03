@@ -51,7 +51,7 @@ def default_c_p():
            # Temperature c_p
            'temperature_output_on':False,
            
-           # Piezo c_p
+           # Piezo c_p (xyz separete stage)
            'piezo_targets': [10,10,10],
            'piezo_pos': [10,10,10],
            
@@ -66,12 +66,24 @@ def default_c_p():
            'motor_y_target_speed': 0,
            'motor_z_target_speed': 0,
            
-           
+           # Deep learning tracking
+           'network': None,
+           'tracking_on': False,
+           'prescale_factor': 1, # Factor with which the image is to be prescaled before doing the tracking/traing
+           'alpha': 0,
+           'cut_off': 0,
+           'train_new_model': False,
+           'training_image': np.zeros([64,64]),
+           'epochs': 30,
+           'epochs_trained': 0,
+           'predicted_particle_positions': np.array([[300, 300]]),
+
            # Thorlabs motors
            'thorlabs_motor_threads': [],
            'serial_nums_motors':["27502419","27502438",""], # Serial numbers of x,y, and z motors
            'stepper_serial_no': '70167314',
            'stepper_starting_position': [0, 0, 0],
+
            #'stage_stepper_connected': [False, False, False],
            'stepper_current_position': [0, 0, 0],
            'stepper_target_position': [2.3, 2.3, 7],
@@ -84,6 +96,13 @@ def default_c_p():
            'steppers_connected': [False, False, False], # Are the steppers connected?
            'stepper_controller': None,
            'polling_rate': 250,
+
+           # Thorlabs piezo k-cube
+           'z_starting_position': 0,
+           'z_current_position': 0,
+           'z_piezo_connected': False,
+           'connect_z_piezo': True,
+           'z_movement':0,
         }
     return c_p
 

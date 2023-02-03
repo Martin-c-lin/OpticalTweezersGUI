@@ -35,7 +35,8 @@ from time import sleep
 from functools import partial
 from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
-import MotorControlWidget
+import MotorControlWidget # Makes file search crash!
+from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
 
 
 class Worker(QThread):
@@ -94,9 +95,12 @@ class Worker(QThread):
 
     def draw_particle_positions(self, centers):
         # TODO add function also for crosshair to help with alignment.
-        for x, y in zip(centers):
-            #self.brush.
-            pass
+        rx = 10
+        ry = 10
+        for pos in centers:
+            x = pos[0]
+            y = pos[1]
+            self.qp.drawEllipse(x-int(rx/2)-1, y-int(ry/2)-1, rx, ry)
     
     def preprocess_image(self):
 
@@ -166,6 +170,8 @@ class Worker(QThread):
             self.c_p['click_tools'][self.c_p['mouse_params'][5]].draw(self.qp)
             self.qp.setPen(self.blue_pen)
             self.draw_central_circle()
+            if self.c_p['tracking_on']:
+                self.draw_particle_positions(self.c_p['predicted_particle_positions'])
             self.qp.end()
             self.changePixmap.emit(picture)
 
@@ -220,6 +226,9 @@ class MainWindow(QMainWindow):
         self.VideoWriterThread = VideoWriterThread(2, 'video thread', self.c_p)
         self.VideoWriterThread.start()
 
+        self.DeepThread = DeepLearningAnalyserLDS(self.c_p)
+        self.DeepThread.start()
+
         self.plot_windows = None
 
         # Set up camera window
@@ -238,7 +247,8 @@ class MainWindow(QMainWindow):
 
         self.c_p['click_tools'].append(CameraClicks(self.c_p))
         
-        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
+        # self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
+        self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['mouse_params'][5] = 1 # Set motor tool as default
 
         # Create toolbar
@@ -246,8 +256,12 @@ class MainWindow(QMainWindow):
         create_camera_toolbar_external(self)
         self.addToolBarBreak() 
         self.create_mouse_toolbar()
-        # Create menu
+
+        # Create menus and drop down options
+        self.menu = self.menuBar()
         self.create_filemenu()
+        self.drop_down_window_menu()
+
         self.show()
 
     @pyqtSlot(QImage)
@@ -268,17 +282,22 @@ class MainWindow(QMainWindow):
         self.set_camera_tool.triggered.connect(camera_action)
         self.set_camera_tool.setCheckable(False)
         
-        self.set_motor_tool = QAction("Motor action", self)
+        self.set_motor_tool = QAction("Motor tool", self)
         self.set_motor_tool.setToolTip("Use the mouse to move around in the sample by clicking or dragging.")
         motor_command = partial(self.set_mouse_tool, 1)
         self.set_motor_tool.triggered.connect(motor_command)
         self.set_motor_tool.setCheckable(False)
         
+        self.set_DL_area_tool = QAction("Area select tool", self)
+        self.set_DL_area_tool.setToolTip("Use the mouse to select an area to train network on by dragging.")
+        dl_area_command = partial(self.set_mouse_tool, 2)
+        self.set_DL_area_tool.triggered.connect(dl_area_command)
+        self.set_DL_area_tool.setCheckable(False)
+
         self.mouse_toolbar.addAction(self.set_camera_tool)
         self.mouse_toolbar.addAction(self.set_motor_tool)
+        self.mouse_toolbar.addAction(self.set_DL_area_tool)
 
-
-        
         
     def set_mouse_tool(self, tool_no=0):
         if tool_no<len(self.c_p['click_tools']):    
@@ -346,7 +365,6 @@ class MainWindow(QMainWindow):
             pass
 
     def create_filemenu(self):
-        self.menu = self.menuBar()
 
         file_menu = self.menu.addMenu("File")
         file_menu.addSeparator()
@@ -380,6 +398,8 @@ class MainWindow(QMainWindow):
         set_save_action.triggered.connect(self.set_save_path)
         file_menu.addAction(set_save_action)
 
+    def drop_down_window_menu(self):
+        # Create windows drop down menu
         window_menu = self.menu.addMenu("Windows")
         window_menu.addSeparator()
 
@@ -395,6 +415,12 @@ class MainWindow(QMainWindow):
         self.open_motor_window.triggered.connect(self.open_motor_control_window)
         self.open_motor_window.setCheckable(False)
         window_menu.addAction(self.open_motor_window)
+
+        self.open_deep_window = QAction("DL window", self)
+        self.open_deep_window.setToolTip("Open window for deep learning control.")
+        self.open_deep_window.triggered.connect(self.OpenDeepLearningWindow)
+        self.open_deep_window.setCheckable(False)
+        window_menu.addAction(self.open_deep_window)
 
     def set_video_format(self, video_format):
         self.c_p['video_format'] = video_format
@@ -422,6 +448,7 @@ class MainWindow(QMainWindow):
     def set_save_path(self):
         # TODO this does not work with python 3.8
         fname = QFileDialog.getExistingDirectory(self, "Save path")
+        # fname = QFileDialog.getOpenFileName(self, "open file")
         if len(fname) > 3:
             self.c_p['recording_path'] = fname
 
@@ -490,37 +517,6 @@ class MainWindow(QMainWindow):
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseRelease()
         self.c_p['mouse_params'][0] = 0
 
-        """
-        if e.button() == Qt.MouseButton.MiddleButton or \
-            e.button() == Qt.MouseButton.RightButton:
-            return
-
-        x0, y0, x1, y1 = self.c_p['mouse_params'][1:5]
-        dx = x1 - x0
-        dy = y1 - y0
-        if dx**2 < 100 or dy**2 < 100:
-            print(dx,dy)
-            return
-
-        #self.c_p['image_scale'] = self.c_p['image_scale']
-        left = int(x0 * self.c_p['image_scale'])
-        right = int(x1 *self.c_p['image_scale'])
-        if right < left:
-            tmp = right
-            right = left
-            left = tmp
-        up = int(y0 * self.c_p['image_scale'])
-        down = int(y1 * self.c_p['image_scale'])
-        if up < down:
-            tmp = up
-            up = down
-            down = tmp
-
-        self.c_p['AOI'] = [self.c_p['AOI'][0] + left,self.c_p['AOI'][0] + right,
-                           self.c_p['AOI'][2] + down,self.c_p['AOI'][2] + up]
-        print("Udpating settings")
-        self.c_p['new_settings_camera'] = [True, 'AOI']
-        """
 
     def mouseDoubleClickEvent(self, e):
         # Double click to move center?
@@ -550,6 +546,10 @@ class MainWindow(QMainWindow):
         self.data_window= SaveDataWindow(self.c_p, self.data_channels)
         self.data_window.show()
 
+    def OpenDeepLearningWindow(self):
+        self.dep_learning_window = DeepLearningControlWidget(self.c_p)
+        self.dep_learning_window.show()
+
     def closeEvent(self, event):
         # TODO close also other widgets here
         if self.plot_windows is not None:
@@ -568,6 +568,8 @@ class MainWindow(QMainWindow):
             self.PICReaderT.join()
         if self.PICWriterT is not None:
             self.PICWriterT.join()
+
+        self.DeepThread.join()
 
         self.VideoWriterThread.join()
 
@@ -624,8 +626,9 @@ def create_camera_toolbar_external(main_window):
     main_window.gain_LineEdit.textChanged.connect(main_window.set_gain)
     main_window.camera_toolbar.addWidget(main_window.gain_LineEdit)
 
-app = QApplication(sys.argv)
-w = MainWindow()
-w.show()
-app.exec()
-w.c_p['program_running'] = False
+if __name__ == '__main__':
+    app = QApplication(sys.argv)
+    w = MainWindow()
+    w.show()
+    app.exec()
+    w.c_p['program_running'] = False

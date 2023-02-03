@@ -18,8 +18,9 @@ from PyQt6.QtGui import QAction, QIntValidator
 import numpy as np
 from functools import partial
 from threading import Thread
-from ThorlabsMotor import MotorThreadV2
+from ThorlabsMotor import MotorThreadV2, PiezoThread
 from CustomMouseTools import MouseInterface
+
 
 # Maybe have this as a QThread?
 class MotorControllerWindow(QWidget):
@@ -79,17 +80,23 @@ class ThorlabsMotorWindow(QWidget):
         self.y_movement = 0
         self.motor_x = None
         self.motor_y = None
+        self.piezo_z = None
         
         self.label = QLabel("Motor controller")
         layout.addWidget(self.label)
 
-        """
+        
         self.SpeedLineEdit = QLineEdit()
-        self.SpeedLineEdit.setValidator(QIntValidator(0,100))
+        self.SpeedLineEdit.setValidator(QIntValidator(0,200))
         self.SpeedLineEdit.setText(str(self.motor_speed))
         self.SpeedLineEdit.textChanged.connect(self.set_motor_speed)
         layout.addWidget(self.SpeedLineEdit) 
-        """
+        
+
+        self.start_x = QPushButton('start x thread')
+        self.start_x.pressed.connect(self.start_motor_x)
+        self.start_x.setCheckable(False)
+        layout.addWidget(self.start_x)
 
         self.start_y = QPushButton('start y thread')
         self.start_y.pressed.connect(self.start_motor_y)
@@ -97,10 +104,10 @@ class ThorlabsMotorWindow(QWidget):
         self.start_y.setCheckable(False)
         layout.addWidget(self.start_y)
         
-        self.start_x = QPushButton('start x thread')
-        self.start_x.pressed.connect(self.start_motor_x)
-        self.start_x.setCheckable(False)
-        layout.addWidget(self.start_x)
+        self.start_z = QPushButton('start z thread')
+        self.start_z.pressed.connect(self.start_piezo_z)
+        self.start_z.setCheckable(False)
+        layout.addWidget(self.start_z)
 
         
         self.print_position_button = QPushButton('Print position')
@@ -130,6 +137,28 @@ class ThorlabsMotorWindow(QWidget):
         if self.motor_x is None:
             self.motor_x = MotorThreadV2(channel=0, axis=0, c_p=self.c_p)
             self.motor_x.start()
+
+    def set_motor_speed(self, speed):
+        try:
+            speed = float(speed) * 1e-3
+        except:
+            return
+        if speed > 1:
+            print("Speed too high")
+            return
+        self.c_p['stepper_max_speed'][0] = speed
+        self.c_p['stepper_max_speed'][1] = speed
+        self.c_p['stepper_acc'][0] = speed * 2 
+        self.c_p['stepper_acc'][1] = speed * 2
+        self.c_p['new_stepper_velocity_params'][0] = True
+        self.c_p['new_stepper_velocity_params'][1] = True        
+
+    def start_piezo_z(self):
+        if self.piezo_z is None:
+            serial_no = "97100532"
+            channel = 1
+            self.piezo_z = PiezoThread(serial_no, channel, self.c_p)
+            self.piezo_z.start()
             
 
     def motor_y_pos(self):
@@ -176,6 +205,9 @@ class MotorClickMove(MouseInterface):
             self.x_0_motor = self.c_p['stepper_current_position'][0]
             self.y_0_motor = self.c_p['stepper_current_position'][1]
 
+        # Scroll wheel
+        elif self.c_p['mouse_params'][0] == 3:
+            self.y_0 = self.c_p['mouse_params'][2]
         
     def mouseRelease(self):
         if self.c_p['mouse_params'][0] == 2:
@@ -195,6 +227,14 @@ class MotorClickMove(MouseInterface):
             self.c_p['stepper_target_position'][0] = self.x_0_motor - dx * self.c_p['microns_per_pix']
             self.c_p['stepper_target_position'][1] = self.y_0_motor - dy * self.c_p['microns_per_pix']
             print(dx* self.c_p['microns_per_pix'], dy* self.c_p['microns_per_pix'])
+
+        elif self.c_p['mouse_params'][0] == 3:
+            dy = (self.y_0 - self.c_p['mouse_params'][4])
+            self.y_0 = self.c_p['mouse_params'][4]
+            if np.abs(dy) > 2:
+                self.c_p['z_movement'] += dy * 4
+            self.c_p['z_movement'] += dy
+            print(dy, self.c_p['z_current_position'])
         
         
         

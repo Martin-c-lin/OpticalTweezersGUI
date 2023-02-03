@@ -4,9 +4,9 @@ the max381 stage as well as kcube motors. The motors are handled as threads
 '''
 
 # Import packages
-from ctypes import *
-import clr,sys
-from System import Decimal,Int32
+# from ctypes import *
+import clr, sys
+from System import Decimal, Int32
 from time import sleep
 from threading import Thread
 import numpy as np
@@ -466,7 +466,7 @@ def MoveMotorPixels(motor, distance, mmToPixel=16140):
     '''
     motor.SetJogStepSize(Decimal(float(distance/mmToPixel)))
     try:
-        motor.MoveJog(1, timeoutVal)  # Jog in forward direction
+        motor.MoveJog(MotorDirection(1), timeoutVal)  # Jog in forward direction
     except Exception as ex:
         print(f"Failed to move motor \n {ex}")
         return False
@@ -504,7 +504,7 @@ def MoveMotorToPixel(motor, targetPixel,
     dx = -(targetPixel-currentPixel)/mmToPixel
     motor.SetJogStepSize(Decimal(float(dx)))
     try:
-        motor.MoveJog(1,timeoutVal)# Jog in forward direction
+        motor.MoveJog(MotorDirection(1),timeoutVal)# Jog in forward direction
     except Exception as ex:
         print(f"Failed to move motor \n {ex}")
         return False
@@ -650,17 +650,16 @@ class PiezoThread(Thread):
     Will also help with automagically adjusting the focus to the sample.
     '''
 
-    def __init__(self, threadID, name, serial_no, channel, c_p,
+    def __init__(self, serial_no, channel, c_p,
                  polling_rate=250):
         Thread.__init__(self)
-        self.threadID = threadID
-        self.name = name
         self.piezo = PiezoMotor(serial_no, channel=channel,
                                 pollingRate=polling_rate)
         if self.piezo.is_connected:
             c_p['z_starting_position'] = self.piezo.get_position()
             c_p['z_current_position'] = self.piezo.get_position()
-            c_p['motors_connected'][2] = self.piezo.is_connected
+            c_p['z_piezo_connected'] = self.piezo.is_connected
+            print(f"Piezo is at {c_p['z_starting_position'] }")
         self.setDaemon(True)
         self.c_p = c_p
 
@@ -669,46 +668,29 @@ class PiezoThread(Thread):
         c_p = self.c_p
         lifting_distance = 0
         while c_p['program_running']:
-            c_p['motors_connected'][2] = self.piezo.is_connected
-
+            c_p['z_piezo_connected'] = self.piezo.is_connected
+            
             # Check if piezo connected and should be connected
-            if self.piezo.is_connected and c_p['connect_motor'][2]:
-
+            if self.piezo.is_connected and c_p['connect_z_piezo']:
                 # Check if the objective should be moved
-                #self.piezo.move_to_position(compensate_focus(c_p)+lifting_distance)
-
+                c_p['z_current_position'] = self.piezo.get_position()
                 if c_p['z_movement'] != 0:
                     c_p['z_movement'] = int(c_p['z_movement'])
-                    # Move up if we are not already up
-                    if self.piezo.move_relative(c_p['z_movement']):
-                        lifting_distance += c_p['z_movement']
+                    self.piezo.move_relative(c_p['z_movement'])
                     c_p['z_movement'] = 0
-
-                elif c_p['return_z_home'] and c_p['motor_current_pos'][2] > compensate_focus(c_p):
-                    lifting_distance -= min(20,c_p['motor_current_pos'][2]-compensate_focus(c_p))
-                    # Compensating for hysteresis effect in movement
-                    print('homing z')
-                if c_p['motor_current_pos'][2] <= compensate_focus(c_p) or c_p['z_movement'] != 0:
-                    c_p['return_z_home'] = False
-                if self.piezo.is_connected:
-                    c_p['motor_current_pos'][2] = self.piezo.get_position()
-
             # Piezomotor not connected but should be
-            elif not self.piezo.is_connected and c_p['connect_motor'][2]:
+            elif not self.piezo.is_connected and c_p['connect_z_piezo']:
                 self.piezo.connect_piezo_motor()
                 sleep(0.4)
                 if self.piezo.is_connected:
                     # If the motor was just connected then reset positions
-                    c_p['motor_current_pos'][2] = self.piezo.get_position()
-
-                    c_p['z_starting_position'] = c_p['motor_current_pos'][2]
-                    c_p['motor_starting_pos'][0] = c_p['motor_current_pos'][0]
-                    c_p['motor_starting_pos'][1] = c_p['motor_current_pos'][1]
+                    c_p['z_current_position'] = self.piezo.get_position()
+                    c_p['z_starting_position'] = c_p['z_current_position']
             # Piezo motor connected but should not be
-            elif self.piezo.is_connected and not c_p['connect_motor'][2]:
+            elif self.piezo.is_connected and not c_p['connect_ z_piezo']:
                 self.piezo.disconnect_piezo()
 
-            sleep(0.3)
+            sleep(0.05)
         del(self.piezo)
 
 
@@ -963,7 +945,7 @@ class XYZ_stepper_stage_motor(Thread):
         self.sleep_time = sleep_time
         self.step = step
         self.is_moving = False
-        self.move_direction = 1
+        self.move_direction = MotorDirection(1)
         self.stepper_channel = None
 
     def connect_channel(self):
@@ -984,7 +966,8 @@ class XYZ_stepper_stage_motor(Thread):
         self.stepper_channel.MoveTo(target_pos, Int32(100000))
 
     def move_distance(self, distance):
-        self.stepper_channel.MoveRelative(1, Decimal(distance), Int32(100000))
+        # TODO Check if replacing 1 with MotorDirection(1) fixed bug
+        self.stepper_channel.MoveRelative(MotorDirection(1), Decimal(distance), Int32(100000))
         self.update_current_position()
 
     def move_fast_to(self, position):
@@ -1024,7 +1007,7 @@ class XYZ_stepper_stage_motor(Thread):
 
         if np.abs(jog_distance) > 1e-4:
             self.stepper_channel.SetJogStepSize(Decimal(float(jog_distance)))
-            self.stepper_channel.MoveJog(1, Int32(10000))
+            self.stepper_channel.MoveJog(MotorDirection(1), Int32(10000))
 
     # TODO z-motor does not like that one changes speed while moving
     def set_velocity_params(self):
@@ -1080,7 +1063,7 @@ class XYZ_stepper_stage_motor(Thread):
                     #     self.move_distance(jog_distance)
                     #     self.c_p['stepper_target_position'][self.axis] = self.update_current_position()
                     # else:
-                    self.stepper_channel.MoveContinuous(self.move_direction)
+                    self.stepper_channel.MoveContinuous(MotorDirection(self.move_direction))
                     self.is_moving = True
 
                 elif np.abs(jog_distance) <= self.step:
@@ -1140,7 +1123,7 @@ class MotorThreadV2(Thread):
             self.sleep_time = sleep_time
             self.step = step
             self.is_moving = False
-            self.move_direction = 1
+            self.move_direction = MotorDirection(1)
             # self.stepper_channel = None # Replaced with motor
             try:
                 self.stepper_channel = InitiateMotor(c_p['serial_nums_motors'][self.axis],
@@ -1168,7 +1151,7 @@ class MotorThreadV2(Thread):
             self.stepper_channel.MoveTo(target_pos, Int32(100000))
 
         def move_distance(self, distance):
-            self.stepper_channel.MoveRelative(1, Decimal(distance), Int32(100000))
+            self.stepper_channel.MoveRelative(MotorDirection(1), Decimal(distance), Int32(100000))
             self.update_current_position()
 
         def move_to_position(self, position):
@@ -1184,7 +1167,7 @@ class MotorThreadV2(Thread):
 
             if np.abs(jog_distance) > 1e-4:
                 self.stepper_channel.SetJogStepSize(Decimal(float(jog_distance)))
-                self.stepper_channel.MoveJog(1, Int32(10000))
+                self.stepper_channel.MoveJog(MotorDirection(1), Int32(10000))
 
         # TODO z-motor does not like that one changes speed while moving
         def set_velocity_params(self):
@@ -1240,7 +1223,7 @@ class MotorThreadV2(Thread):
                             self.move_distance(jog_distance)
                             self.c_p['stepper_target_position'][self.axis] = self.update_current_position()
                         else:
-                            self.stepper_channel.MoveContinuous(self.move_direction)
+                            self.stepper_channel.MoveContinuous(MotorDirection(self.move_direction))
                             self.is_moving = True
 
                     elif np.abs(jog_distance) <= self.step:
