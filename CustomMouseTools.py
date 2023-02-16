@@ -7,7 +7,6 @@ Created on Sun Jan 15 10:28:23 2023
 import abc
 
 class MouseInterface(metaclass=abc.ABCMeta):
-    # TODO add id for each tool
     @classmethod
     def __subclasshook__(cls, subclass):
         # TODO Add a icon or similar bar
@@ -19,9 +18,14 @@ class MouseInterface(metaclass=abc.ABCMeta):
                 callable(subclass.mouseRelease) and
                 hasattr(subclass, 'draw') and
                 callable(subclass.draw) and
+                hasattr(subclass, 'getToolName') and
+                callable(subclass.getToolName) and
+                hasattr(subclass, 'getToolTip') and
+                callable(subclass.getToolTip) and
                 hasattr(subclass, 'mouseDoubleClick') and
                 callable(subclass.mouseDoubleClick) or
                 NotImplemented)
+                
     
 
 class MarkPositionTool(MouseInterface):
@@ -35,7 +39,6 @@ class MarkPositionTool(MouseInterface):
         pass
     def mousePressLeft(self):
         # Adds a marker in specified position
-        # TODO handle resizing of the screen
         x_pos = self.c_p['mouse_params'][1] * self.c_p['image_scale']
         y_pos = self.c_p['mouse_params'][2] * self.c_p['image_scale']
         self.marker_positions.append(x_pos, y_pos)

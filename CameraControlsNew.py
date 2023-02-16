@@ -80,6 +80,12 @@ class CameraClicks(MouseInterface):
         if self.c_p['mouse_params'][0] == 2:
             pass
         
+    def getToolName(self):
+        return "Camera tool"
+
+    def getToolTip(self):
+        return "Use the mouse to zoom in on the screen."
+        
 
 
 class CameraInterface(metaclass=abc.ABCMeta):

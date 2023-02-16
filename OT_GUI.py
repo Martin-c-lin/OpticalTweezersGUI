@@ -37,6 +37,7 @@ from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
 import MotorControlWidget # Makes file search crash!
 from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
+from PlanktonViewWidget import PlanktonViewer
 
 
 class Worker(QThread):
@@ -98,8 +99,8 @@ class Worker(QThread):
         rx = 10
         ry = 10
         for pos in centers:
-            x = pos[0]
-            y = pos[1]
+            x = int(pos[1])
+            y = int(pos[0])
             self.qp.drawEllipse(x-int(rx/2)-1, y-int(ry/2)-1, rx, ry)
     
     def preprocess_image(self):
@@ -116,7 +117,6 @@ class Worker(QThread):
 
     def draw_central_circle(self):
         self.blue_pen.setColor(QColor('blue'))
-        # self.qp.setPen(QPen(QColor('blue')))
         cx = int((self.c_p['camera_width']/2 - self.c_p['AOI'][0])/self.c_p['image_scale'])
         cy = int((self.c_p['camera_height']/2 - self.c_p['AOI'][2])/self.c_p['image_scale'])
         rx=50
@@ -150,9 +150,7 @@ class Worker(QThread):
                                        self.image.shape[0],
                                        QImage.Format.Format_Grayscale8)
                 QT_Image = QT_Image.convertToFormat(QImage.Format.Format_RGB888)
-            else:
-                # TODO have the image always generated as a rgb image.
-                
+            else:                
                 QT_Image = QImage(self.image, self.image.shape[1],
                                        self.image.shape[0],
                                        QImage.Format.Format_RGB888)
@@ -161,7 +159,7 @@ class Worker(QThread):
                 W,H,
                 Qt.AspectRatioMode.KeepAspectRatio,
             )
-            # Give other things time to work, roughly 50 fps default.
+            # Give other things time to work, roughly 40-50 fps default.
             sleep(0.02) # Sets the FPS
             
             # Paint extra items on the screen
@@ -189,7 +187,6 @@ class MainWindow(QMainWindow):
         try:
             camera = None
             camera = BaslerCameras.BaslerCamera()
-            # TODO fix error of program not quitting when trying to connect to basler
             # camera if there is no camera connected.
             # camera = ThorlabsCameras.ThorlabsCamera()
             
@@ -245,12 +242,6 @@ class MainWindow(QMainWindow):
         th.changePixmap.connect(self.setImage)
         th.start()
 
-        self.c_p['click_tools'].append(CameraClicks(self.c_p))
-        
-        # self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
-        self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
-        self.c_p['mouse_params'][5] = 1 # Set motor tool as default
-
         # Create toolbar
         #self.create_camera_toolbar()
         create_camera_toolbar_external(self)
@@ -272,88 +263,33 @@ class MainWindow(QMainWindow):
         pass
     
     def create_mouse_toolbar(self):
+
+        self.c_p['click_tools'].append(CameraClicks(self.c_p))
+        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
+        self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
+        self.c_p['mouse_params'][5] = 0
+
         self.mouse_toolbar = QToolBar("Mouse tools")
         self.addToolBar(self.mouse_toolbar)
+        self.mouse_actions = []
         
-        # TODO make the different tools checkable
-        self.set_camera_tool = QAction("Camera tool", self)
-        self.set_camera_tool.setToolTip("Use the mouse to zoom in on the screen.")
-        camera_action = partial(self.set_mouse_tool, 0)
-        self.set_camera_tool.triggered.connect(camera_action)
-        self.set_camera_tool.setCheckable(False)
-        
-        self.set_motor_tool = QAction("Motor tool", self)
-        self.set_motor_tool.setToolTip("Use the mouse to move around in the sample by clicking or dragging.")
-        motor_command = partial(self.set_mouse_tool, 1)
-        self.set_motor_tool.triggered.connect(motor_command)
-        self.set_motor_tool.setCheckable(False)
-        
-        self.set_DL_area_tool = QAction("Area select tool", self)
-        self.set_DL_area_tool.setToolTip("Use the mouse to select an area to train network on by dragging.")
-        dl_area_command = partial(self.set_mouse_tool, 2)
-        self.set_DL_area_tool.triggered.connect(dl_area_command)
-        self.set_DL_area_tool.setCheckable(False)
-
-        self.mouse_toolbar.addAction(self.set_camera_tool)
-        self.mouse_toolbar.addAction(self.set_motor_tool)
-        self.mouse_toolbar.addAction(self.set_DL_area_tool)
-
+        for idx, tool in enumerate(self.c_p['click_tools']):
+            self.mouse_actions.append(QAction(tool.getToolName(), self))
+            self.mouse_actions[-1].setToolTip(tool.getToolTip())
+            command = partial(self.set_mouse_tool, idx)
+            self.mouse_actions[-1].triggered.connect(command)
+            self.mouse_actions[-1].setCheckable(True)
+            self.mouse_toolbar.addAction(self.mouse_actions[-1])
+        self.mouse_actions[self.c_p['mouse_params'][5]].setChecked(True)
         
     def set_mouse_tool(self, tool_no=0):
-        if tool_no<len(self.c_p['click_tools']):    
-            self.c_p['mouse_params'][5] = tool_no
-            print("Tool set to ", tool_no)
-        
-        
-    def create_camera_toolbar(self):
-        self.camera_toolbar = QToolBar("Camera tools")
-        self.addToolBar(self.camera_toolbar)
-        # self.add_camera_actions(self.camera_toolbar)
-        self.zoom_action = QAction("Zoom out", self)
-        self.zoom_action.setToolTip("Resets the field of view of the camera.")
-        self.zoom_action.triggered.connect(self.ZoomOut)
-        self.zoom_action.setCheckable(False)
-
-        self.record_action = QAction("Record video", self)
-        self.record_action.setToolTip("Turn ON recording.")
-        self.record_action.setShortcut('Ctrl+R')
-        self.record_action.triggered.connect(self.ToggleRecording)
-        self.record_action.setCheckable(True)
-
-        self.snapshot_action = QAction("Snapshot", self)
-        self.snapshot_action.setToolTip("Take snapshot of camera view.")
-        self.snapshot_action.setShortcut('Shift+S')
-        self.snapshot_action.triggered.connect(self.snapshot)
-        self.snapshot_action.setCheckable(False)
-
-        self.open_plot_window = QAction("Open plotter", self)
-        self.open_plot_window.setToolTip("Open live plotting window.")
-        self.open_plot_window.triggered.connect(self.show_new_window)
-        self.open_plot_window.setCheckable(False)
-
-        self.set_exp_tim = QAction("Set exposure time", self)
-        self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
-        self.set_exp_tim.triggered.connect(self.set_exposure_time)
-        self.set_exp_tim.setCheckable(False)
-        
-        self.camera_toolbar.addAction(self.zoom_action)
-        self.camera_toolbar.addAction(self.record_action)
-        self.camera_toolbar.addAction(self.snapshot_action)
-        
-        self.exposure_time_LineEdit = QLineEdit()
-        self.exposure_time_LineEdit.setValidator(QDoubleValidator(0.99,99.99,2))
-        self.exposure_time_LineEdit.setText(str(self.c_p['exposure_time']))
-        self.camera_toolbar.addWidget(self.exposure_time_LineEdit)
-        self.camera_toolbar.addAction(self.set_exp_tim)
-
-        # TODO add offset and label to this        
-        self.gain_LineEdit = QLineEdit()
-        self.gain_LineEdit.setToolTip("Set software gain on displayed image.")
-        self.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
-        self.gain_LineEdit.setText(str(self.c_p['image_gain']))
-        self.gain_LineEdit.setText(str(self.c_p['motor_x_target_speed']))
-        self.gain_LineEdit.textChanged.connect(self.set_gain)
-        self.camera_toolbar.addWidget(self.gain_LineEdit)
+        if tool_no > len(self.c_p['click_tools']):
+            return
+        self.c_p['mouse_params'][5] = tool_no
+        for tool in self.mouse_actions:
+            tool.setChecked(False)
+        self.mouse_actions[tool_no].setChecked(True)
+        print("Tool set to ", tool_no)
 
     def set_gain(self, gain):
         try:
@@ -361,7 +297,7 @@ class MainWindow(QMainWindow):
             self.c_p['image_gain'] = g
             print(f"Gain is now {gain}")
         except ValueError:
-            # Harmless, someone deleted all the numbers
+            # Harmless, someone deleted all the numbers in the line-edit
             pass
 
     def create_filemenu(self):
@@ -410,11 +346,17 @@ class MainWindow(QMainWindow):
         window_menu.addAction(self.open_plot_window)
 
         
-        self.open_motor_window = QAction("Motor window", self)
+        self.open_motor_window = QAction("Minitweezers motor window", self)
         self.open_motor_window.setToolTip("Open window for manual motor control.")
         self.open_motor_window.triggered.connect(self.open_motor_control_window)
         self.open_motor_window.setCheckable(False)
         window_menu.addAction(self.open_motor_window)
+
+        self.open_thorlabsM_window = QAction("Thorlabs motor window", self)
+        self.open_thorlabsM_window.setToolTip("Open window for manual motor control, thorlabs motors.")
+        self.open_thorlabsM_window.triggered.connect(self.open_thorlabs_motor_control_window)
+        self.open_thorlabsM_window.setCheckable(False)
+        window_menu.addAction(self.open_thorlabsM_window)
 
         self.open_deep_window = QAction("DL window", self)
         self.open_deep_window.setToolTip("Open window for deep learning control.")
@@ -422,18 +364,25 @@ class MainWindow(QMainWindow):
         self.open_deep_window.setCheckable(False)
         window_menu.addAction(self.open_deep_window)
 
+        self.open_plankton_window = QAction("Plankton viewer", self)
+        self.open_plankton_window.setToolTip("Open plankton viewer window.")
+        self.open_plankton_window.triggered.connect(self.openPlanktonViwer)
+        self.open_plankton_window.setCheckable(False)
+        window_menu.addAction(self.open_plankton_window)
+
+    def openPlanktonViwer(self):
+        self.planktonView = PlanktonViewer(self.c_p)
+
     def set_video_format(self, video_format):
         self.c_p['video_format'] = video_format
 
-    def toggle_led(self):
-        # TODO rename this
-        # TestFunction
-        pass
-
     def open_motor_control_window(self):
-        self.MCW = MotorControlWidget.ThorlabsMotorWindow(self.c_p) #MotorControlWidget.MotorControllerWindow(self.c_p)
+        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p) #MotorControlWidget.ThorlabsMotorWindow(self.c_p) #
         self.MCW.show()
 
+    def open_thorlabs_motor_control_window(self):
+        self.MCW_T = MotorControlWidget.ThorlabsMotorWindow(self.c_p)
+        self.MCW_T.show()
     def set_image_format(self, image_format):
         self.c_p['image_format'] = image_format
         
@@ -446,10 +395,10 @@ class MainWindow(QMainWindow):
         self.c_p['new_settings_camera'] = [True, 'exposure_time']
 
     def set_save_path(self):
-        # TODO this does not work with python 3.8
         fname = QFileDialog.getExistingDirectory(self, "Save path")
-        # fname = QFileDialog.getOpenFileName(self, "open file")
         if len(fname) > 3:
+            # If len is less than 3 then the action was cancelled and we should not update
+            # the path.
             self.c_p['recording_path'] = fname
 
     def ZoomOut(self):
@@ -487,7 +436,6 @@ class MainWindow(QMainWindow):
         self.c_p['frame_size'] = W, H
 
     def mouseMoveEvent(self, e):
-        # TODO handle different presses differently, left right and middle key
         self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseMove()
@@ -498,11 +446,8 @@ class MainWindow(QMainWindow):
         self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
 
-        if e.button() == Qt.MouseButton.LeftButton and not self.c_p['mouse_params'][0]:
-            # handle the left-button press in here            if
+        if e.button() == Qt.MouseButton.LeftButton:
             self.c_p['mouse_params'][0] = 1
-            # self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
-            # self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
         if e.button() == Qt.MouseButton.RightButton:
             self.c_p['mouse_params'][0] = 2
         if e.button() == Qt.MouseButton.MiddleButton:
@@ -578,14 +523,6 @@ def create_camera_toolbar_external(main_window):
     main_window.camera_toolbar = QToolBar("Camera tools")
     main_window.addToolBar(main_window.camera_toolbar)
 
-    # Add test button for led
-    """
-    main_window.test_led = QAction("Toggle led1", main_window)
-    main_window.test_led.setToolTip("Turn on/off led1 on the controller.")
-    main_window.test_led.triggered.connect(main_window.toggle_led)
-    main_window.test_led.setCheckable(True)
-    main_window.camera_toolbar.addAction(main_window.test_led)
-    """
     # main_window.add_camera_actions(main_window.camera_toolbar)
     main_window.zoom_action = QAction("Zoom out", main_window)
     main_window.zoom_action.setToolTip("Resets the field of view of the camera.")
@@ -632,3 +569,59 @@ if __name__ == '__main__':
     w.show()
     app.exec()
     w.c_p['program_running'] = False
+
+
+
+"""
+        
+        
+    def create_camera_toolbar(self):
+        self.camera_toolbar = QToolBar("Camera tools")
+        self.addToolBar(self.camera_toolbar)
+        # self.add_camera_actions(self.camera_toolbar)
+        self.zoom_action = QAction("Zoom out", self)
+        self.zoom_action.setToolTip("Resets the field of view of the camera.")
+        self.zoom_action.triggered.connect(self.ZoomOut)
+        self.zoom_action.setCheckable(False)
+
+        self.record_action = QAction("Record video", self)
+        self.record_action.setToolTip("Turn ON recording.")
+        self.record_action.setShortcut('Ctrl+R')
+        self.record_action.triggered.connect(self.ToggleRecording)
+        self.record_action.setCheckable(True)
+
+        self.snapshot_action = QAction("Snapshot", self)
+        self.snapshot_action.setToolTip("Take snapshot of camera view.")
+        self.snapshot_action.setShortcut('Shift+S')
+        self.snapshot_action.triggered.connect(self.snapshot)
+        self.snapshot_action.setCheckable(False)
+
+        self.open_plot_window = QAction("Open plotter", self)
+        self.open_plot_window.setToolTip("Open live plotting window.")
+        self.open_plot_window.triggered.connect(self.show_new_window)
+        self.open_plot_window.setCheckable(False)
+
+        self.set_exp_tim = QAction("Set exposure time", self)
+        self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
+        self.set_exp_tim.triggered.connect(self.set_exposure_time)
+        self.set_exp_tim.setCheckable(False)
+        
+        self.camera_toolbar.addAction(self.zoom_action)
+        self.camera_toolbar.addAction(self.record_action)
+        self.camera_toolbar.addAction(self.snapshot_action)
+        
+        self.exposure_time_LineEdit = QLineEdit()
+        self.exposure_time_LineEdit.setValidator(QDoubleValidator(0.99,99.99,2))
+        self.exposure_time_LineEdit.setText(str(self.c_p['exposure_time']))
+        self.camera_toolbar.addWidget(self.exposure_time_LineEdit)
+        self.camera_toolbar.addAction(self.set_exp_tim)
+
+        # TODO add offset and label to this        
+        self.gain_LineEdit = QLineEdit()
+        self.gain_LineEdit.setToolTip("Set software gain on displayed image.")
+        self.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
+        self.gain_LineEdit.setText(str(self.c_p['image_gain']))
+        self.gain_LineEdit.textChanged.connect(self.set_gain)
+        self.camera_toolbar.addWidget(self.gain_LineEdit)
+
+"""

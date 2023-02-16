@@ -4,8 +4,9 @@ Created on Mon Jan  9 14:48:59 2023
 
 @author: marti
 """
-
+# TODO make sure that image orientations are correct and that we are using GPU.
 import deeptrack as dt
+import tensorflow as tf
 import numpy as np
 from threading import Thread
 from time import sleep
@@ -14,10 +15,11 @@ from PyQt6.QtGui import  QColor,QPen
 from PyQt6.QtWidgets import (
     QMainWindow, QCheckBox, QComboBox, QListWidget, QLineEdit,
     QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,
-    QPushButton, QVBoxLayout, QWidget, QLabel
+    QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 )
 
 import cv2
+from PIL import Image
 import matplotlib.pyplot as plt
 
 # TODO the main network should be able to have multiple DL threads each with
@@ -46,7 +48,7 @@ class DeepLearningAnalyserLDS(Thread):
         
         Thread.__init__(self)
         self.c_p = c_p
-        self.model = model
+        self.c_p['model'] = model
         self.training_target_size = (64, 64)
         self.particle_type = particle_type # Type of particle to be tracked/analyzed
         self.setDaemon(True)
@@ -72,21 +74,38 @@ class DeepLearningAnalyserLDS(Thread):
         # Check that the data is square
         assert np.shape(training_data)[0] == np.shape(training_data)[1], "Training data not square"
 
-        self.model = dt.models.LodeSTAR(input_shape=(None, None, 1))
+        self.c_p['model'] = dt.models.LodeSTAR(input_shape=(None, None, 1))
         # Rescale training data to fit the standard size which is 64
         self.pred_image_scale = 1
         original_width = np.shape(training_data)[0]
         if original_width > 64:
             self.c_p['prescale_factor'] = 64 / original_width
-            training_data = cv2.rescale(training_data, dsize=(64,64), interpolation=cv2.INTER_CUBIC)
+            # TODO use PIL rescale and not cv2, may make a difference!
+            training_data = cv2.resize(training_data, dsize=(64,64), interpolation=cv2.INTER_CUBIC)
         training_data = dt.Value(training_data)
-        self.model.fit(training_data, epochs=self.c_p['epochs'], batch_size=8) # Default
+        """
+        train_set =   (
+        dt.Value(crop)
+        >> dt.Affine(scale=lambda:np.random.uniform(0.7, 1.4, 2), translate=lambda:np.random.uniform(-2, 2, 2))
+        >> dt.AveragePooling((downsample, downsample, 1))
+        >> dt.Add(lambda: np.random.randn() * 0.2)
+        >> dt.Multiply(lambda: np.random.uniform(0.25, 1.1))
+        >> dt.Gaussian(sigma=lambda:np.random.uniform(0, 0.04))  
+        
+        )
+        """
+        
+        self.c_p['model'].fit(training_data, epochs=self.c_p['epochs'], batch_size=8) # Default
         """
         while (self.c_p['epochs_trained'] < self.c_p['epochs']) and self.c_p['program_running']:
-            self.model.fit(training_data, epochs=1, batch_size=8)
+            self.c_p['model'].fit(training_data, epochs=1, batch_size=8)
             self.c_p['epochs_trained'] += 1
         self.c_p['epochs_trained'] = 0        
         """
+
+    def setModel(self, model):
+        self.c_p['model'] = model
+
     def make_prediction(self):
         """
         Predicts particle positions in the center square of the current image
@@ -99,37 +118,31 @@ class DeepLearningAnalyserLDS(Thread):
 
         """
         
-        assert self.model is not None, "No model to make the prediction"
+        assert self.c_p['model'] is not None, "No model to make the prediction"
         
         # Prepare the image for prediction
         data = np.array(self.c_p['image'])
-        s = np.shape(data)
-        # Cut out square in center to analyze. Check with benjamin if this is necessary
-        # TODO check how this handles color
-        if s[0] < s[1]:
-            diff = int((s[1] - s[0])/2)
-            data = data[:,diff:diff+s[0]]
-        elif s[0] > s[1]:
-            diff = int((s[0] - s[1])/2)
-            data = data[diff:diff+s[0],:]
-        # rescale data
-        new_size = int(np.shape(data)[0] * self.c_p['prescale_factor'])
-        data = cv2.resize(data, dsize=(new_size, new_size), interpolation=cv2.INTER_CUBIC)
-        data = np.reshape(data, [1, new_size, new_size, 1])
+
+        height = int(self.c_p['prescale_factor']*np.shape(data)[0])
+        width = int(self.c_p['prescale_factor']*np.shape(data)[1])
+        data = np.array(Image.fromarray(data).resize((width,height)))
+        data = np.reshape(data,[1,height, width,1])
         try:
-            positions = self.model.predict_and_detect(data)# TODO have alpha, cut_off etc adaptable.
+            alpha = self.c_p['alpha']
+            cutoff= self.c_p['cutoff']
+            beta = 1-alpha
+            positions = self.c_p['model'].predict_and_detect(data, alpha=alpha, cutoff=cutoff, beta=beta)# TODO have alpha, cut_off etc adaptable.
         except Exception as e:
             print("Deeptrack error \n", e)
             # Get the error "h = 0 is ambiguous, use local_maxima() instead?"
             return np.array([[300,300]])
-        # print(np.array(positions[0])/self.c_p['prescale_factor'])
-        return np.array(positions[0]) / self.c_p['prescale_factor'] * self.c_p['image_scale']
+        return np.array(positions[0]) / self.c_p['prescale_factor'] / self.c_p['image_scale']
 
     def run(self):
         
         while self.c_p['program_running']:
             # By default check a central square of the frame. Maybe even have a ROI for this thread
-            if self.model is not None and self.c_p['tracking_on']:
+            if self.c_p['model'] is not None and self.c_p['tracking_on']:
                 self.c_p['predicted_particle_positions'] = self.make_prediction()
             if self.c_p['train_new_model']:
                 print("training new model")
@@ -171,13 +184,30 @@ class DeepLearningControlWidget(QWidget):
         self.train_network_button.setCheckable(False)
         layout.addWidget(self.train_network_button)
 
+        self.load_network_button = QPushButton('Load network')
+        self.load_network_button.pressed.connect(self.load_network)
+        self.load_network_button.setCheckable(False)
+        layout.addWidget(self.load_network_button)
+
+
+        self.save_network_button = QPushButton('Save network')
+        self.save_network_button.pressed.connect(self.save_network)
+        self.save_network_button.setCheckable(False)
+        layout.addWidget(self.save_network_button)
+
         self.setLayout(layout)
 
-    def save_network(self, name):
-        pass
+    def save_network(self):
+        filename = QFileDialog.getSaveFileName(self, 'Save network',
+            self.c_p['recording_path'],"Network (*.h5)")
+        print(f"Filename for saveing {filename} .")
     
-    def load_network(self, network_path):
-        pass
+    def load_network(self):
+        filename = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
+        print(f"You want to open network {filename}")
+        backend = tf.keras.models.load_model(filename) 
+        self.c_p['model'] = dt.models.LodeSTAR(backend.model) 
+        self.c_p['prescale_factor'] = 0.106667 # TODO fix so this is changeable
 
     def toggle_tracking(self):
         self.c_p['tracking_on'] = not self.c_p['tracking_on']
@@ -266,10 +296,10 @@ class MouseAreaSelect(MouseInterface):
         crop = im[down:down+width, left:left+width]
         self.c_p['prescale_factor'] = 64 / width
         print(self.c_p['prescale_factor'])
-        res = cv2.resize(crop, dsize=(64,64), interpolation=cv2.INTER_CUBIC)
+        res = cv2.resize(crop, dsize=(32,32), interpolation=cv2.INTER_CUBIC)
         plt.imshow(res)
         plt.show()
-        self.c_p['training_image'] = np.reshape(res,[64,64,1])
+        self.c_p['training_image'] = np.reshape(res,[32,32,1])
 
     def mouseDoubleClick(self):
         pass
@@ -277,4 +307,10 @@ class MouseAreaSelect(MouseInterface):
     def mouseMove(self):
         if self.c_p['mouse_params'][0] == 2:
             pass
+    
+    def getToolName(self):
+        return "Area select tool"
+
+    def getToolTip(self):
+        return "Use the mouse to select an area to train network on by dragging."
         

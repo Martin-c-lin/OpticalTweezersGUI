@@ -57,22 +57,33 @@ def default_c_p():
            
            # PIC reader c_p
            # TODO add all the necessary channels here. PSDs and motors.
-           'pic_channels':['Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+           'pic_channels':[
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+                            'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
+                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
+                            'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
+                            'T_time',
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
                            'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
-                           'PSD_pA_X_diff', 'PSD_pA_Y_diff', 'PSD_pA_sum'],
+                           ],
            
            # Motor output
            'motor_x_target_speed': 0,
            'motor_y_target_speed': 0,
            'motor_z_target_speed': 0,
-           
+
+           # Piezo outputs
+           'piezo_A': np.uint8([128, 128]),
+           'piezo_B': np.uint8([128, 128]),
+
            # Deep learning tracking
            'network': None,
            'tracking_on': False,
            'prescale_factor': 1, # Factor with which the image is to be prescaled before doing the tracking/traing
-           'alpha': 0,
-           'cut_off': 0,
+           'alpha': 1,
+           'cutoff': 0.9995,
            'train_new_model': False,
+           'model':None,
            'training_image': np.zeros([64,64]),
            'epochs': 30,
            'epochs_trained': 0,
@@ -196,6 +207,7 @@ class DataChannel:
 
         return ret
 
+"""
 def get_data_dicitonary():
     # TODO replace the entries with data channels
     data = {
@@ -208,9 +220,10 @@ def get_data_dicitonary():
             'Y-position':[0],
             'Z-position':[0],
             'Temperature':[0],
-            'T_time':[0], # Todo have just a single time
+            'T_time':[0],
             }
     return data
+"""
 
 def get_data_dicitonary_new():
     """
@@ -219,7 +232,6 @@ def get_data_dicitonary_new():
     ['PSD_pA_y1','bits'],
     ['PSD_pA_y2','bits'],
     """
-    # TODO replace the entries with data channels
     data = [['Time','(s)'],
     ['X-force','(pN)'],
     ['Y-force','(pN)'],
@@ -235,9 +247,18 @@ def get_data_dicitonary_new():
     ['Motor_x_speed','ticks/s'],
     ['Motor_y_speed','ticks/s'],
     ['Motor_z_speed','ticks/s'],
-    ['PSD_pA_sum','bits'],
-    ['PSD_pA_X_diff','bits'],
-    ['PSD_pA_Y_diff','bits'],
+    ['PSD_A_P_X','bits'],
+    ['PSD_A_P_Y','bits'],
+    ['PSD_A_P_sum','bits'],
+    ['PSD_A_F_X', 'bits'],
+    ['PSD_A_F_Y','bits'],
+    ['PSD_A_F_sum','bits'],
+    ['PSD_B_P_X', 'bits'],
+    ['PSD_B_P_Y','bits'],
+    ['PSD_B_P_sum','bits'],
+    ['PSD_B_F_X', 'bits'],
+    ['PSD_B_F_Y','bits'],
+    ['PSD_B_F_sum','bits'],
     ['T_time','Seconds']]
     
     data_dict = {}

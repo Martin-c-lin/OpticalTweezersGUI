@@ -235,8 +235,12 @@ class MotorClickMove(MouseInterface):
                 self.c_p['z_movement'] += dy * 4
             self.c_p['z_movement'] += dy
             print(dy, self.c_p['z_current_position'])
-        
-        
+
+    def getToolName(self):
+        return "motor tool"
+
+    def getToolTip(self):
+        return "Move the motors by clicking or dragging on the screen"
         
         
         
