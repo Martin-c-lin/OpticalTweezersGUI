@@ -5,12 +5,18 @@ Created on Mon Jan  9 14:48:59 2023
 @author: marti
 """
 # TODO make sure that image orientations are correct and that we are using GPU.
+import torch
+import cv2
+import sys
+
 import deeptrack as dt
 import tensorflow as tf
 import numpy as np
+import matplotlib.pyplot as plt
+
 from threading import Thread
 from time import sleep
-from CustomMouseTools import MouseInterface
+from PIL import Image
 from PyQt6.QtGui import  QColor,QPen
 from PyQt6.QtWidgets import (
     QMainWindow, QCheckBox, QComboBox, QListWidget, QLineEdit,
@@ -18,13 +24,42 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 )
 
-import cv2
-from PIL import Image
-import matplotlib.pyplot as plt
+sys.path.append('C:/Users/Martin/OneDrive/PhD/AutOT/') # TODO move this to same folder as this file
+
+import find_particle_threshold as fpt
+from unet_model import UNet
+from CustomMouseTools import MouseInterface
 
 # TODO the main network should be able to have multiple DL threads each with
 # its own network alternatively we should have the thread capable of having 
 # multiple networks.
+
+def torch_unet_prediction(model, image, device, fac=4, threshold=150):
+
+    new_size = [int(np.shape(image)[1]/fac),int(np.shape(image)[0]/fac)]
+    rescaled_image = cv2.resize(image, dsize=new_size, interpolation=cv2.INTER_CUBIC)
+    s = np.shape(rescaled_image)
+    rescaled_image = rescaled_image[:s[0]-s[0]%32, :s[1]-s[1]%32]
+    # TODO do more of this in pytorch which is faster since it works on GPU
+    rescaled_image = np.float32(np.reshape(rescaled_image,[1,1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1]]))
+    predicted_image = model(torch.tensor(rescaled_image).to(device))
+    resulting_image = predicted_image.detach().cpu().numpy()
+    x,y,_ = fpt.find_particle_centers(np.array(resulting_image[0,0,:,:]), threshold)
+    
+    return fac*np.array(x), fac*np.array(y)
+
+def load_torch_unet(model_path):
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using GPU {torch.cuda.is_available()}\nDevice name: {torch.cuda.get_device_name(0)}")
+    model = UNet(
+        input_shape=(1, 1, 256, 256),
+        number_of_output_channels=1,  # 2 for binary segmentation and 3 for multiclass segmentation
+        conv_layer_dimensions=(8, 16, 32, 64, 128, 256),  # smaller UNet (faster training)
+    )
+    model.load_state_dict(torch.load(model_path))
+    model.to(device)
+    return model, device
+
 class DeepLearningAnalyserLDS(Thread):
     """
     Thread which analyses the real-time image for detecting particles
@@ -45,7 +80,7 @@ class DeepLearningAnalyserLDS(Thread):
         None.
 
         """
-        
+        # TODO replace model with network
         Thread.__init__(self)
         self.c_p = c_p
         self.c_p['model'] = model
@@ -106,6 +141,20 @@ class DeepLearningAnalyserLDS(Thread):
     def setModel(self, model):
         self.c_p['model'] = model
 
+    def make_unet_prediction(self):
+        fac = 4 # TODO make this a parameter
+        s = np.shape(self.c_p['image'])
+        crop = self.c_p['image'][0:s[0]-s[0]%32,0:s[1]-s[1]%32] # TODO check indices
+        new_size = (int(np.shape(crop)[1]/fac),int(np.shape(crop)[0]/fac))
+        rescaled_image = cv2.resize(crop, dsize=new_size, interpolation=cv2.INTER_CUBIC)
+        rescaled_image = np.reshape(rescaled_image,[1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1],1])
+        tmp = np.float64(rescaled_image)/ np.max(rescaled_image)
+        tmp *= 2
+        tmp -= (np.min(tmp)/2)
+        predicted_image = self.c_p['model'].predict(tmp)
+        x,y,_ = fpt.find_particle_centers(predicted_image[0,:,:,0],self.c_p['cutoff'])
+        return np.array(x)*fac, np.array(y)*fac
+
     def make_prediction(self):
         """
         Predicts particle positions in the center square of the current image
@@ -120,6 +169,11 @@ class DeepLearningAnalyserLDS(Thread):
         
         assert self.c_p['model'] is not None, "No model to make the prediction"
         
+        if self.c_p['network'] == "DeepTrack Unet":
+            return self.make_unet_prediction()
+        if self.c_p['network'] == "pytorch Unet":
+            return torch_unet_prediction(self.c_p['model'], self.c_p['image'], self.device)
+
         # Prepare the image for prediction
         data = np.array(self.c_p['image'])
 
@@ -132,6 +186,7 @@ class DeepLearningAnalyserLDS(Thread):
             cutoff= self.c_p['cutoff']
             beta = 1-alpha
             positions = self.c_p['model'].predict_and_detect(data, alpha=alpha, cutoff=cutoff, beta=beta)# TODO have alpha, cut_off etc adaptable.
+
         except Exception as e:
             print("Deeptrack error \n", e)
             # Get the error "h = 0 is ambiguous, use local_maxima() instead?"
@@ -144,13 +199,13 @@ class DeepLearningAnalyserLDS(Thread):
             # By default check a central square of the frame. Maybe even have a ROI for this thread
             if self.c_p['model'] is not None and self.c_p['tracking_on']:
                 self.c_p['predicted_particle_positions'] = self.make_prediction()
+            else:
+                sleep(0.1)
             if self.c_p['train_new_model']:
                 print("training new model")
                 self.train_new_model(self.c_p['training_image'])
                 self.c_p['train_new_model'] = False
-            sleep(0.1)
-         
-    
+            
 
 class DeepLearningControlWidget(QWidget):
     def __init__(self, c_p):
@@ -189,6 +244,10 @@ class DeepLearningControlWidget(QWidget):
         self.load_network_button.setCheckable(False)
         layout.addWidget(self.load_network_button)
 
+        self.load_unet_button = QPushButton('Load U-Net')
+        self.load_unet_button.pressed.connect(self.load_deeptrack_unet)
+        self.load_unet_button.setCheckable(False)
+        layout.addWidget(self.load_unet_button)
 
         self.save_network_button = QPushButton('Save network')
         self.save_network_button.pressed.connect(self.save_network)
@@ -200,7 +259,7 @@ class DeepLearningControlWidget(QWidget):
     def save_network(self):
         filename = QFileDialog.getSaveFileName(self, 'Save network',
             self.c_p['recording_path'],"Network (*.h5)")
-        print(f"Filename for saveing {filename} .")
+        print(f"Filename for saving {filename} .")
     
     def load_network(self):
         filename = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
@@ -208,6 +267,20 @@ class DeepLearningControlWidget(QWidget):
         backend = tf.keras.models.load_model(filename) 
         self.c_p['model'] = dt.models.LodeSTAR(backend.model) 
         self.c_p['prescale_factor'] = 0.106667 # TODO fix so this is changeable
+
+    def load_deeptrack_unet(self):
+        network_name = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
+        custom_objects = {"unet_crossentropy": dt.losses.weighted_crossentropy((10, 1))}
+        with tf.keras.utils.custom_object_scope(custom_objects):
+            #try:
+            self.c_p['model'] = tf.keras.models.load_model(network_name)
+            self.c_p['network'] = "DeepTrack Unet"
+            
+    def load_pytorch_unet(self):
+        network_name = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
+        self.c_p['model'], self.device  = load_torch_unet(network_name)
+        self.c_p['network'] = "Pytorch Unet"
+
 
     def toggle_tracking(self):
         self.c_p['tracking_on'] = not self.c_p['tracking_on']

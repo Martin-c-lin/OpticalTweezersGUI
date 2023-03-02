@@ -35,10 +35,12 @@ from time import sleep
 from functools import partial
 from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
-import MotorControlWidget # Makes file search crash!
+import MotorControlWidget
+from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
 from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
 from PlanktonViewWidget import PlanktonViewer
-
+from DataChannelsInfoWindow import CurrentValueWindow
+from ReadArduinoPortenta import PortentaComms
 
 class Worker(QThread):
     '''
@@ -212,11 +214,11 @@ class MainWindow(QMainWindow):
             print(E)
         """
         try:
-            self.PICReaderT = PicReader(self.c_p, self.data_channels)
+            self.PICReaderT = PortentaComms(self.c_p, self.data_channels, 'COM9') #PicReader(self.c_p, self.data_channels)
             self.PICReaderT.start()
             sleep(0.1)
-            self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
-            self.PICWriterT.start()
+            #self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
+            #self.PICWriterT.start()
         except Exception as E:
             print(E)
 
@@ -263,9 +265,10 @@ class MainWindow(QMainWindow):
         pass
     
     def create_mouse_toolbar(self):
-
+        # Here is where all the tools in the mouse toolbar are added
         self.c_p['click_tools'].append(CameraClicks(self.c_p))
-        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p))
+        self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels)) # Changed to minitweezers tool
+        self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
         self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['mouse_params'][5] = 0
 
@@ -364,14 +367,31 @@ class MainWindow(QMainWindow):
         self.open_deep_window.setCheckable(False)
         window_menu.addAction(self.open_deep_window)
 
+        self.open_laser_piezo_window_action = QAction("Laser piezos window", self)
+        self.open_laser_piezo_window_action.setToolTip("Open window controlling piezos of lasers.")
+        self.open_laser_piezo_window_action.triggered.connect(self.OpenLaserPiezoWidget)
+        self.open_laser_piezo_window_action.setCheckable(False)
+        window_menu.addAction(self.open_laser_piezo_window_action)
+
         self.open_plankton_window = QAction("Plankton viewer", self)
         self.open_plankton_window.setToolTip("Open plankton viewer window.")
         self.open_plankton_window.triggered.connect(self.openPlanktonViwer)
         self.open_plankton_window.setCheckable(False)
         window_menu.addAction(self.open_plankton_window)
 
+        
+        self.open_channel_viewer = QAction("Data channels", self)
+        self.open_channel_viewer.setToolTip("Opens a separate window in which the current values \n of the data channels is displayed.")
+        self.open_channel_viewer.triggered.connect(self.open_channels_winoow)
+        self.open_channel_viewer.setCheckable(False)
+        window_menu.addAction(self.open_channel_viewer)
+
     def openPlanktonViwer(self):
         self.planktonView = PlanktonViewer(self.c_p)
+
+    def open_channels_winoow(self):
+        self.channelView = CurrentValueWindow(self.c_p, self.data_channels)
+        self.channelView.show()
 
     def set_video_format(self, video_format):
         self.c_p['video_format'] = video_format
@@ -494,6 +514,10 @@ class MainWindow(QMainWindow):
     def OpenDeepLearningWindow(self):
         self.dep_learning_window = DeepLearningControlWidget(self.c_p)
         self.dep_learning_window.show()
+
+    def OpenLaserPiezoWidget(self):
+        self.laser_piezo_window = LaserPiezoWidget(self.c_p)
+        self.laser_piezo_window.show()
 
     def closeEvent(self, event):
         # TODO close also other widgets here

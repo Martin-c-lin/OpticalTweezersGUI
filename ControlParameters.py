@@ -6,9 +6,8 @@ Created on Fri Oct  7 13:48:24 2022
 """
 
 import numpy as np
-from PIL import Image
+from PIL import Image # Errors with this, dont know why
 from queue import Queue
-
 
 def default_c_p():
     """
@@ -73,8 +72,8 @@ def default_c_p():
            'motor_z_target_speed': 0,
 
            # Piezo outputs
-           'piezo_A': np.uint8([128, 128]),
-           'piezo_B': np.uint8([128, 128]),
+           'piezo_A': np.uint16([20_000, 20_000]),
+           'piezo_B': np.uint16([20_000, 20_000]),
 
            # Deep learning tracking
            'network': None,
@@ -94,6 +93,10 @@ def default_c_p():
            'serial_nums_motors':["27502419","27502438",""], # Serial numbers of x,y, and z motors
            'stepper_serial_no': '70167314',
            'stepper_starting_position': [0, 0, 0],
+
+           # Minitweezers motors
+           'minitweezers_target_pos': [32677,32677,32677],
+           'minitweezers_target_speed': [0,0,0],
 
            #'stage_stepper_connected': [False, False, False],
            'stepper_current_position': [0, 0, 0],
@@ -131,7 +134,7 @@ class DataChannel:
     index: int = 1
     full: bool = False # True if all elements have been filled
     max_retrivable: int = 1
-    
+
     def put_data(self, d):
         # Check that it is correct length
         try:
@@ -298,5 +301,6 @@ def load_example_image(c_p):
     None.
 
     """
+    
     img = Image.open("./Example data/BG_image.jpg")
     c_p['image'] = np.asarray(img)

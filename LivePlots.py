@@ -26,11 +26,13 @@ from functools import partial
 Colors = {
     'red': (255,0,0),
     'blue': (0,0,255),
+    'navy blue': (0,0,128),
     'green': (0,255,0),
     'gray': (150,150,150),
     'white': (255,255,255),
     'black': (0,0,0),
     'cyan': (0,255,255),
+    'yellow': (255,255,0),
     'Transparent': (0,0,0,0),
     }
 
@@ -297,6 +299,11 @@ class PlotWindow(QMainWindow):
         self.add_plot_action.triggered.connect(self.add_plot)
         self.add_plot_action.setCheckable(False)
 
+        self.add_circle_action = QAction("Add circle", self)
+        self.add_circle_action.setToolTip("Adds a circle in the center of the graph")
+        self.add_circle_action.triggered.connect(self.add_circle)
+        self.add_circle_action.setCheckable(False) # Should be true
+
         self.plot_axis_action = QAction("Adjust plot axis", self)
         self.plot_axis_action.setToolTip("Manually change the axis limits.")
         self.plot_axis_action.triggered.connect(self.open_plot_axis_window)
@@ -306,6 +313,7 @@ class PlotWindow(QMainWindow):
         self.toolbar.addAction(self.stop_plot)
         self.toolbar.addAction(self.add_plot_action)
         self.toolbar.addAction(self.plot_axis_action)
+        self.toolbar.addAction(self.add_circle_action)
         self.setCentralWidget(self.graphWidget)
         self.addToolBar(self.toolbar)
         self.addToolBar(self.toolbar_extra)
@@ -313,8 +321,19 @@ class PlotWindow(QMainWindow):
         
         # TODO have all the subwindows close automatically when main application close
         # TODO fix label sizes, font and so that they automatically have correct axis
+        #self.circle=None
         self.set_axis_labels()        
         self.timer.start()
+
+    def add_circle(self):
+        radius=100.0
+        center=[32767.0,32767.0]
+        self._t = np.linspace(0,2*np.pi,100)
+        self.x_c = (radius * np.cos(self._t)) + center[0]
+        self.y_c = (radius * np.sin(self._t)) + center[1]
+        pen = pg.mkPen(color=Colors['white'])
+        self.circle = self.graphWidget.plot(self.x_c, self.y_c, pen=pen)
+        self.circle.setVisible(True)
 
     def set_axis_labels(self):
         """

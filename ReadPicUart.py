@@ -92,9 +92,10 @@ class PicReader(Thread):
         self.c_p = c_p
         self.data_channels = data_channels
         self.serial_channel = None
+        self.setDaemon(True)
         try:
             # try to open port. Timout helps make the reading more consistent
-            self.serial_channel = serial.Serial(com_ch, baudrate=115200, timeout=50)
+            self.serial_channel = serial.Serial(com_ch, baudrate=115200, timeout=50) # 115200
         except Exception as ex:
             print("No comm port")
             print(ex)
@@ -125,28 +126,72 @@ class PicWriter(Thread):
         Thread.__init__(self)
         self.serial_channel = serial_channel
         self.c_p = c_p
-        self.send_data = np.uint8(np.zeros(8))
+        self.send_data = np.uint8(np.zeros(2))
         self.send_data[0] = 255
         self.s = []
-        
+        self.setDaemon(True)
+
+
+    def put_message(self,idx):
+        if idx == 0:
+            self.send_data[0] = 255
+            self.send_data[1] = self.c_p['motor_x_target_speed'] + 126
+        if idx == 1:
+            self.send_data[0] = 254
+            self.send_data[1] = self.c_p['motor_y_target_speed'] + 126
+        if idx == 2:
+            self.send_data[0] = 253 
+            self.send_data[1] = self.c_p['motor_z_target_speed'] + 126
+        if idx == 3:
+            self.send_data[0] = 252
+            self.send_data[1] = self.c_p['piezo_A'][0]
+        if idx == 4:
+            self.send_data[0] = 251
+            self.send_data[1] = self.c_p['piezo_A'][1]
+        if idx == 5:
+            self.send_data[0] = 250
+            self.send_data[1] = self.c_p['piezo_B'][0]
+        if idx == 6:
+            self.send_data[0] = 249
+            self.send_data[1] = self.c_p['piezo_B'][1]
+            
+        self.s = struct.pack('!{0}B'.format(len(self.send_data)), *self.send_data)
+
     def put_data(self):
+        """
         self.send_data[1] = self.c_p['motor_x_target_speed'] + 126
-        self.send_data[2] = self.c_p['motor_y_target_speed'] + 126
+        self.send_data[2] = self.c_p['motor_y_target_speed'] + 126 # 126 and 126
         self.send_data[3] = self.c_p['motor_z_target_speed'] + 126
         self.send_data[4] = self.c_p['piezo_A'][0]
         self.send_data[5] = self.c_p['piezo_A'][1]
         self.send_data[6] = self.c_p['piezo_B'][0]
         self.send_data[7] = self.c_p['piezo_B'][1]
         self.send_data = np.uint8(self.send_data)
+        """
+        self.send_data[1] = self.c_p['motor_x_target_speed'] + 126
+        self.send_data[2] = 254
+        self.send_data[3] = self.c_p['motor_y_target_speed'] + 126 # 126 and 126
+        self.send_data[4] = 253
+        self.send_data[5] = self.c_p['motor_z_target_speed'] + 126
+        #self.send_data[4] = self.c_p['piezo_A'][0]
+        #self.send_data[5] = self.c_p['piezo_A'][1]
+        self.send_data[6] = self.c_p['piezo_B'][0]
+        self.send_data[7] = self.c_p['piezo_B'][1]
+        self.send_data = np.uint8(self.send_data)
+
         self.s = struct.pack('!{0}B'.format(len(self.send_data)), *self.send_data)
 
     def run(self):
+        idx = 0
         while self.c_p['program_running']:
             if self.serial_channel is not None:
-                self.put_data()
+                # self.put_data()
+                self.put_message(idx)
+                idx += 1
+                idx %= 7
                 # print(self.send_data[1])
                 self.serial_channel.write(self.send_data)
-            sleep(0.01)
+            #sleep(0.0002)
 
 
 
