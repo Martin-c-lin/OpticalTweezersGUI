@@ -27,7 +27,7 @@ def default_c_p():
 
            # Camera c_p
            'image': np.ones([500, 500]),#, 1]),
-           'image_idx': 0, # Index of snapshot image
+           'image_idx': 0, # Index of snapshot image, add also video idx maybe.
            'color': "mono",  # Options are mono and color # Maybe add bit depth too
            'new_settings_camera': [False, None],
            'camera_width': 1920,
@@ -35,6 +35,7 @@ def default_c_p():
            'recording': False,
            'exposure_time': 5000,
            'fps': 50,  # Frames per second of camera
+           'filename': '',
            'video_name': 'Video',
            'video_format': 'avi',
            'image_format': 'png',
@@ -45,7 +46,7 @@ def default_c_p():
            'bitrate': '30000000', #'300000000',
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
            'image_scale': 1,
-           'microns_per_pix': 50/5000 * 1e-3, # 5000 pixels per 30 micron roughly, changed to have more movements
+           'microns_per_pix': 30/5000 * 1e-3, # 5000 pixels per 30 micron roughly, changed to have more movements
 
            # Temperature c_p
            'temperature_output_on':False,
@@ -61,16 +62,27 @@ def default_c_p():
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
                             'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
+                            'Photodiode_A','Photodiode_B',
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+                            #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
+                            'T_time','Time_micros_high','Time_micros_low',
+                           ],
+                           
+           # Temporary solution to use both PIC and Portenta
+           'old_pic_channels':[
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+                            'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
+                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
+                            'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
                             'T_time',
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
-                           'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
+                            'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
                            ],
-           
-           # Motor output
-           'motor_x_target_speed': 0,
-           'motor_y_target_speed': 0,
-           'motor_z_target_speed': 0,
-
+            
+            'used_pic_channels':[
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',],
+                            
            # Piezo outputs
            'piezo_A': np.uint16([20_000, 20_000]),
            'piezo_B': np.uint16([20_000, 20_000]),
@@ -83,22 +95,44 @@ def default_c_p():
            'cutoff': 0.9995,
            'train_new_model': False,
            'model':None,
+           'device': None, # Pytorch device on which the model runs
            'training_image': np.zeros([64,64]),
            'epochs': 30,
            'epochs_trained': 0,
-           'predicted_particle_positions': np.array([[300, 300]]),
+           'predicted_particle_positions': np.array([]),
+
+            # Autocontroller parameters
+            'centering_on': False,
+            'trap_particle': False,
+            'search_and_trap': False,
+            'laser_position': [1520,1830], # Default 
+
+            # Minitweezers controller parameters
+            'COM_port': 'COM9',
+            'minitweezers_connected': False,
+
+           # Minitweezers motors
+           'motor_x_target_speed': 0,
+           'motor_y_target_speed': 0,
+           'motor_z_target_speed': 0,
+           'minitweezers_target_pos': [32678,32678,32678],
+           'minitweezers_target_speed': [0,0,0],
+           'motor_travel_speed': 5_000,
+           'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
 
            # Thorlabs motors
+           'disconnect_motor':[False,False,False],
            'thorlabs_motor_threads': [],
            'serial_nums_motors':["27502419","27502438",""], # Serial numbers of x,y, and z motors
            'stepper_serial_no': '70167314',
+           'thorlabs_threads': [None,None,None],
            'stepper_starting_position': [0, 0, 0],
+           'stepper_controller': None,
+           'polling_rate': 250,
 
-           # Minitweezers motors
-           'minitweezers_target_pos': [32677,32677,32677],
-           'minitweezers_target_speed': [0,0,0],
-
-           #'stage_stepper_connected': [False, False, False],
+            # Common motor parameters
+           'disconnect_motor':[False,False,False],
+           'stage_stepper_connected': [False, False, False],
            'stepper_current_position': [0, 0, 0],
            'stepper_target_position': [2.3, 2.3, 7],
            'stepper_move_to_target': [False, False, False],
@@ -106,10 +140,9 @@ def default_c_p():
            'stepper_max_speed': [0.01, 0.01, 0.01],
            'stepper_acc': [0.005, 0.005, 0.005],
            'new_stepper_velocity_params': [False, False, False],
-           'connect_steppers': False, # Should steppers be connected?
+           'connect_steppers': [False,False,False], # Should steppers be connected?
            'steppers_connected': [False, False, False], # Are the steppers connected?
-           'stepper_controller': None,
-           'polling_rate': 250,
+           'saved_positions':[],
 
            # Thorlabs piezo k-cube
            'z_starting_position': 0,
@@ -210,23 +243,6 @@ class DataChannel:
 
         return ret
 
-"""
-def get_data_dicitonary():
-    # TODO replace the entries with data channels
-    data = {
-            'Time':[0],
-            'X-force':[0],
-            'Y-force':[0],
-            'Z-force':[0],
-            'Motor_position':[0],
-            'X-position':[0],
-            'Y-position':[0],
-            'Z-position':[0],
-            'Temperature':[0],
-            'T_time':[0],
-            }
-    return data
-"""
 
 def get_data_dicitonary_new():
     """
@@ -236,11 +252,12 @@ def get_data_dicitonary_new():
     ['PSD_pA_y2','bits'],
     """
     data = [['Time','(s)'],
+    ['particle_trapped','(bool)'],
     ['X-force','(pN)'],
     ['Y-force','(pN)'],
     ['Z-force','(pN)'],
     ['Motor_position','ticks'],
-    ['X-position','(microns)'],
+    ['X-position','(microns)'], # Remove thos that are not used
     ['Y-position','(microns)'],
     ['Z-position','(microns)'],
     ['Temperature', 'Celsius'],
@@ -262,7 +279,13 @@ def get_data_dicitonary_new():
     ['PSD_B_F_X', 'bits'],
     ['PSD_B_F_Y','bits'],
     ['PSD_B_F_sum','bits'],
-    ['T_time','Seconds']]
+    ['Photodiode_A','bits'],
+    ['Photodiode_B','bits'],
+    ['T_time','Seconds'],
+    ['Time_micros_high','microseconds'],
+    ['Time_micros_low','microseconds'],
+    ['Time_micros','microseconds'], # Make this the time from the portenta.
+    ]
     
     data_dict = {}
     for channel in data:

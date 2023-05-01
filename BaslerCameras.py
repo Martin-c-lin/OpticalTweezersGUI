@@ -22,15 +22,15 @@ class BaslerCamera(CameraInterface):
 
     def capture_image(self):
         if not self.is_grabbing:
-            self.cam.StartGrabbing()
+            self.cam.StartGrabbing(pylon.GrabStrategy_OneByOne)
             self.is_grabbing = True
         try:
-            with self.cam.RetrieveResult(3000) as result:
+            with self.cam.RetrieveResult(3000) as result: # 3000
                 self.img.AttachGrabResultBuffer(result)
                 if result.GrabSucceeded():
                     # Consider if we need to put directly in c_p?
                     image = np.uint8(self.img.GetArray())
-                    self.img.Release()
+                    #self.img.Release()
                     return image
         except TimeoutException as TE:
             print(f"Warning, camera timed out {TE}")

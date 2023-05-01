@@ -12,7 +12,7 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QAction, QDoubleValidator, QIntValidator
+from PyQt6.QtGui import QAction, QDoubleValidator, QIntValidator, QColor
 sys.path.append("C:/Users/marti/OneDrive/PhD/OT software")
 from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
@@ -98,7 +98,6 @@ class PlotSubsamplehWindow(QWidget):
         self.QLE.setValidator(QIntValidator(1, 10_000, self))
         self.QLE.setText(str(self.plot_data['sub_sample'][idx]))
         self.QLE.textChanged.connect(self.set_subsamples)
-        #self.addWidget(self.QLE)
         layout.addWidget(self.QLE)
         self.setLayout(layout)
         
@@ -254,23 +253,17 @@ class PlotWindow(QMainWindow):
     # TODO add legend.
     def __init__(self, c_p, data, x_keys, y_keys):
         super().__init__()
-
+        
         self.c_p = c_p
         self.data = data
         self.graphWidget = pg.PlotWidget()
+        self.graphWidget.addLegend()
         self.sub_widgets = []
         self.x = list(range(100))  # 100 time points
         self.y = [randint(0, 100) for _ in range(100)]  # 100 data points. todo remove if not really needed
         self.y2 = [randint(0, 100) for _ in range(100)]  # 100 data points
         self.default_plot_length = 500
         # Set up plot data
-        self.plot_data = {
-            'x':x_keys,
-            'y':y_keys,
-            }# TODO add settings
-
-        self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
-        self.plot_data['sub_sample'] = np.ones(len(x_keys), int)
 
         self.plot_running = True
         self.graphWidget.setBackground('k')
@@ -278,16 +271,26 @@ class PlotWindow(QMainWindow):
 
         pen = pg.mkPen(color=Colors['red'])
         self.pen2 = pg.mkPen(color=Colors['green'])
+
+        self.plot_data = {
+            'x':x_keys,
+            'y':y_keys,
+            }# TODO add settings
+
+        self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
+        self.plot_data['sub_sample'] = np.ones(len(x_keys), int)
+        self.plot_data['pen'] = [pg.mkPen(color=Colors['red']) for _ in x_keys]
         self.data_lines = []
-        self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen) )
-        self.data_lines.append(self.graphWidget.plot(self.x, self.y2, pen=self.pen2, symbolPen ='w'))
+        # TODO,have better default plots.
+        self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen, name='plot 0'))
+        self.data_lines.append(self.graphWidget.plot(self.x, self.y2, pen=self.pen2, name='plot 1', symbolPen ='w'))
 
         self.timer = QTimer()
         self.timer.setInterval(50) # sets the fps of the timer
         self.timer.timeout.connect(self.update_plot_data)
+        # self.graphWidget.addLegend()  # For unknown reaasons this doesn't work
         
         self.toolbar = QToolBar("Main tools")
-        self.toolbar_extra = QToolBar("Main tools")
 
         self.stop_plot = QAction("Stop plotter", self)
         self.stop_plot.setToolTip("Momentarily freezes the plotting window")
@@ -296,7 +299,9 @@ class PlotWindow(QMainWindow):
 
         self.add_plot_action = QAction("Add plot", self)
         self.add_plot_action.setToolTip("Adds another plot to the window")
-        self.add_plot_action.triggered.connect(self.add_plot)
+        #add_plot_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
+        add_p = partial(self.add_plot, 'Time', 'Y-force')
+        self.add_plot_action.triggered.connect(add_p)# self.add_plot)
         self.add_plot_action.setCheckable(False)
 
         self.add_circle_action = QAction("Add circle", self)
@@ -308,7 +313,7 @@ class PlotWindow(QMainWindow):
         self.plot_axis_action.setToolTip("Manually change the axis limits.")
         self.plot_axis_action.triggered.connect(self.open_plot_axis_window)
         self.plot_axis_action.setCheckable(False)
-        
+        self.graphWidget.addLegend() # Does not work :/ 
 
         self.toolbar.addAction(self.stop_plot)
         self.toolbar.addAction(self.add_plot_action)
@@ -316,12 +321,10 @@ class PlotWindow(QMainWindow):
         self.toolbar.addAction(self.add_circle_action)
         self.setCentralWidget(self.graphWidget)
         self.addToolBar(self.toolbar)
-        self.addToolBar(self.toolbar_extra)
         self.create_plot_menus()
         
         # TODO have all the subwindows close automatically when main application close
         # TODO fix label sizes, font and so that they automatically have correct axis
-        #self.circle=None
         self.set_axis_labels()        
         self.timer.start()
 
@@ -350,13 +353,17 @@ class PlotWindow(QMainWindow):
         self.graphWidget.setLabel('left', y_label, color='red', fontsize=200)
         x_label = f"{self.plot_data['x'][0]} {self.data[self.plot_data['x'][0]].unit}"
         self.graphWidget.setLabel('bottom', x_label, color='red', fontsize=200)
+        self.graphWidget.addLegend()
 
 
-    def add_plot(self):
+
+
+    def add_plot(self, xname='Time', yname='Y-force'):
         # Adds another data line to the plot
         # almost works, problem with it adding extra lines for changing the number of plot points
-        self.plot_data['x'].append('Time')
-        self.plot_data['y'].append('Y-force')
+        
+        self.plot_data['x'].append(xname)
+        self.plot_data['y'].append(yname)
         tmp = np.ones(len(self.plot_data['x']), int) * self.default_plot_length
         tmp[:-1] = self.plot_data['L'][:]
         self.plot_data['L'] = tmp # Add sub_sample here
@@ -364,10 +371,12 @@ class PlotWindow(QMainWindow):
         tmp = np.ones(len(self.plot_data['x']), int)
         tmp[:-1] = self.plot_data['sub_sample'][:]
         self.plot_data['sub_sample'] = tmp # Add sub_sample here
-        #self.plot_data['sub_sample'].append[1]
 
         pen = pg.mkPen(color=Colors['red']) # Default color
-        self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen) )
+        # TODO add also symbols here so that also they are saved.
+        self.plot_data['pen'].append(pen)
+        plot_name = f" {xname} vs {yname}"
+        self.data_lines.append(self.graphWidget.plot(self.x, self.y, name=plot_name,pen=pen) )
         self.menu.clear()
         self.create_plot_menus()
         self.set_axis_labels()
@@ -376,7 +385,9 @@ class PlotWindow(QMainWindow):
 
         self.plot_data['x'].pop(plot_idx)
         self.plot_data['y'].pop(plot_idx)
+        self.plot_data['pen'].pop(plot_idx) # TODO fix out of range error which sometimes occur
         self.data_lines[plot_idx].setVisible(False)
+        self.graphWidget.removeItem(self.data_lines[plot_idx])
         self.data_lines.pop(plot_idx)
 
         self.plot_data['L'] = np.delete(self.plot_data['L'], int(plot_idx))
@@ -402,12 +413,13 @@ class PlotWindow(QMainWindow):
         for idx, line in enumerate(self.data_lines):
             Plot_1_menu = self.menu.addMenu(f"Plot {idx}")
             Plot_1_menu.addSeparator()
-            
             # Create submenu for setting colors
+            Plot_1_menu.setTitle(f"Plot {idx} settings")
+            
             color_submenu = Plot_1_menu.addMenu("Color")
             for col in Colors:
                 
-                color_command = partial(self.set_plot_color, Colors[col], line)
+                color_command = partial(self.set_plot_color, Colors[col], idx)
                 set_col = QAction(col, self)
                 set_col.setStatusTip(f"Set plot color to {col}")
                 set_col.triggered.connect(color_command)
@@ -453,7 +465,6 @@ class PlotWindow(QMainWindow):
             change_length_action.setCheckable(False)
             Plot_1_menu.addAction(change_length_action)
 
-
             change_subsample_action = QAction("Adjust subsampling length", self)
             subsample_command = partial(self.create_plot_subsampler_window, idx)
             change_subsample_action.setStatusTip("Change subsampling frequency")
@@ -462,6 +473,7 @@ class PlotWindow(QMainWindow):
             Plot_1_menu.addAction(change_subsample_action)
  
     def set_plot_symbol(self, plot_idx, symbol):
+        # TODO save symbol as well
         try:
             self.data_lines[plot_idx].setSymbol(symbol)
         except Exception as E:
@@ -512,17 +524,29 @@ class PlotWindow(QMainWindow):
     def set_bg_color(self, color):
         self.graphWidget.setBackground(color)
 
-    def set_plot_color(self, color, line):
+    def set_plot_color(self, color, idx):
         pen = pg.mkPen(color=color)
+        line = self.data_lines[idx]
         line.setPen(pen)
         line.setSymbolPen(pen)
-        # setSymbolBrush
+        if idx == len(self.plot_data['pen']):
+            self.plot_data['pen'].append(pen)
+            return
+        self.plot_data['pen'][idx] = pen
         
     def set_x_data(self, idx, x_data):
         self.plot_data['x'][idx] = x_data
+        plot_name = f" {x_data} vs {self.plot_data['y'][idx]}"
+        self.graphWidget.removeItem(self.data_lines[idx])
+        self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
+                                                     pen=self.plot_data['pen'][idx])#, symbol=self.plot_data['symbol'][idx])
         
     def set_y_data(self, idx, y_data):
         self.plot_data['y'][idx] = y_data
+        plot_name = f" {self.plot_data['x'][idx]} vs {y_data}"
+        self.graphWidget.removeItem(self.data_lines[idx])
+        self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
+                                                     pen=self.plot_data['pen'][idx])#, symbol=self.plot_data['symbol'][idx])
 
     def __del__(self):
         for widget in self.sub_widgets:

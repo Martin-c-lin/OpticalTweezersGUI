@@ -140,6 +140,13 @@ class CameraThread(Thread):
         self.camera.connect_camera()
         c_p['camera_width'], c_p['camera_height'] = camera.get_sensor_size()
         self.c_p = c_p
+
+        # TODO remove temporary solution
+        
+        self.camera.cam.AcquisitionFrameRateEnable = False
+        # self.camera.cam.AcquisitionFrameRate = 11 
+        print("Framrate ", self.camera.cam.ResultingFrameRate())
+        
         # Zoom out
         self.c_p['AOI'] = [0, self.c_p['camera_width'], 0,
                    self.c_p['camera_height']]
@@ -147,7 +154,6 @@ class CameraThread(Thread):
         self.setDaemon(True)
 
     def update_camera_settings(self):
-        # TODO make it so these take input parameters instead of reading c_p
         if self.c_p['new_settings_camera'][1] == 'AOI':
             self.camera.set_AOI(self.c_p['AOI'])
         elif self.c_p['new_settings_camera'][1] == 'exposure_time':
@@ -166,6 +172,8 @@ class CameraThread(Thread):
             if count % 20 == 5:
                 p_t = perf_counter()
             self.c_p['image'] = self.camera.capture_image()
+            if self.c_p['image'] is None:
+                print("None image error!!?!?")
             if self.c_p['recording']:
                 img = copy(self.c_p['image'])
                 name = copy(self.c_p['video_name'])

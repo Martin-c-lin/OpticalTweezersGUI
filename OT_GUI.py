@@ -11,7 +11,7 @@ from PyQt6.QtWidgets import (
     QMainWindow, QApplication,
     QLabel, QCheckBox, QComboBox, QListWidget, QLineEdit, QSpinBox,
     QDoubleSpinBox, QSlider, QToolBar,
-    QPushButton, QVBoxLayout, QWidget, QFileDialog, 
+    QPushButton, QVBoxLayout, QWidget, QFileDialog, QInputDialog
 )
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QRunnable, QObject, QPoint, QRect, QTimer
@@ -20,6 +20,11 @@ from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDou
 from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
 from random import randint
+import numpy as np
+from time import sleep
+from functools import partial
+
+
 
 import BaslerCameras
 import ThorlabsCameras
@@ -30,9 +35,6 @@ from TemperatureControllerWidget import TempereatureControllerWindow
 from ReadPicUart import PicReader, PicWriter
 from LivePlots import PlotWindow
 from SaveDataWidget import SaveDataWindow
-import numpy as np
-from time import sleep
-from functools import partial
 from PIStage import PIStageThread
 from PIStageWidget import PIStageWidget
 import MotorControlWidget
@@ -41,6 +43,8 @@ from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLea
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
 from ReadArduinoPortenta import PortentaComms
+import AutoController
+
 
 class Worker(QThread):
     '''
@@ -78,8 +82,8 @@ class Worker(QThread):
             self.data_channels['Y-force'].put_data(np.sin(self.data_channels['Time'].data / 10))
             self.data_channels['X-force'].put_data(np.cos(self.data_channels['Time'].data / 10))
             self.data_channels['Z-force'].put_data(np.cos(self.data_channels['Time'].data / 10)**2)
-            self.data_channels['X-position'].put_data(np.random.rand(max_length) * 2 - 1)
-            self.data_channels['Y-position'].put_data(np.random.rand(max_length) * 2 - 1)
+            self.data_channels['X-position'].put_data(self.c_p['stepper_current_position'][0])
+            self.data_channels['Y-position'].put_data(self.c_p['stepper_current_position'][1])
             self.data_channels['Z-position'].put_data(np.random.rand(max_length) * 2 - 1)
             self.data_channels['Motor_position'].put_data(np.sin(self.data_channels['Time'].data / 10))
         else:
@@ -91,18 +95,20 @@ class Worker(QThread):
             self.data_channels['X-force'].put_data(np.cos(self.data_channels['Time'].get_data(1) / 10))
             self.data_channels['Z-force'].put_data(np.cos(self.data_channels['Time'].get_data(1) / 10)**2)
 
-            self.data_channels['X-position'].put_data(np.random.rand() * 2 - 1)
-            self.data_channels['Y-position'].put_data(np.random.rand() * 2 - 1)
+            self.data_channels['X-position'].put_data(self.c_p['stepper_current_position'][0])
+            self.data_channels['Y-position'].put_data(self.c_p['stepper_current_position'][1])
             self.data_channels['Z-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Motor_position'].put_data((self.data_channels['Time'].get_data(1) / 10) + np.random.rand())
 
     def draw_particle_positions(self, centers):
         # TODO add function also for crosshair to help with alignment.
-        rx = 10
-        ry = 10
+        rx = int(250/self.c_p['image_scale'])
+        ry = rx
+        self.qp.setPen(self.red_pen)
         for pos in centers:
-            x = int(pos[1])
-            y = int(pos[0])
+            x = int(pos[0]/ self.c_p['image_scale']) # Which is which?
+            y = int(pos[1]/ self.c_p['image_scale'])
+
             self.qp.drawEllipse(x-int(rx/2)-1, y-int(ry/2)-1, rx, ry)
     
     def preprocess_image(self):
@@ -139,9 +145,15 @@ class Worker(QThread):
             if self.test_mode:
                 self.testDataUpdate()
 
-            self.image = np.array(self.c_p['image'])
+            if self.c_p['image'] is not None:
+                self.image = np.array(self.c_p['image'])
+                #print(self.c_p['fps'])
+            else:
+                print("Frame missed!")
             W, H = self.c_p['frame_size']
+            
             self.c_p['image_scale'] = max(self.image.shape[1]/W, self.image.shape[0]/H)
+            
             self.preprocess_image()
             
 
@@ -162,7 +174,7 @@ class Worker(QThread):
                 Qt.AspectRatioMode.KeepAspectRatio,
             )
             # Give other things time to work, roughly 40-50 fps default.
-            sleep(0.02) # Sets the FPS
+            sleep(0.04) # Sets the FPS
             
             # Paint extra items on the screen
             self.qp = QPainter(picture)
@@ -184,6 +196,7 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("Optical tweezers: Main window")
         self.c_p = default_c_p()
         self.data_channels = get_data_dicitonary_new()
+        self.video_idx = 0
         # Start camera threads
         self.CameraThread = None
         try:
@@ -212,13 +225,28 @@ class MainWindow(QMainWindow):
             self.PiezoThread.start()
         except Exception as E:
             print(E)
+
         """
+        self.PortentaReaderT = None
         try:
-            self.PICReaderT = PortentaComms(self.c_p, self.data_channels, 'COM9') #PicReader(self.c_p, self.data_channels)
-            self.PICReaderT.start()
+            
+            self.PortentaReaderT = PortentaComms(self.c_p, self.data_channels) #PicReader(self.c_p, self.data_channels)
+            self.PortentaReaderT.start()
             sleep(0.1)
-            #self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
-            #self.PICWriterT.start()
+            """
+            self.PICReaderT = PicReader(self.c_p, self.data_channels)
+            self.PICReaderT.start()
+            self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
+            self.PICWriterT.start()
+            """
+            
+        except Exception as E:
+            print(E)
+
+        try:
+            self.AotuControllerThread = AutoController.autoControllerThread(self.c_p, self.data_channels)
+            self.AotuControllerThread.start()
+            print("Auto controller started")
         except Exception as E:
             print(E)
 
@@ -254,7 +282,7 @@ class MainWindow(QMainWindow):
         self.menu = self.menuBar()
         self.create_filemenu()
         self.drop_down_window_menu()
-
+        self.action_menu()
         self.show()
 
     @pyqtSlot(QImage)
@@ -267,9 +295,12 @@ class MainWindow(QMainWindow):
     def create_mouse_toolbar(self):
         # Here is where all the tools in the mouse toolbar are added
         self.c_p['click_tools'].append(CameraClicks(self.c_p))
-        self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels)) # Changed to minitweezers tool
+        self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels))
+        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors
         self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
         self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
+        self.c_p['click_tools'].append(AutoController.SelectLaserPosition(self.c_p))
+
         self.c_p['mouse_params'][5] = 0
 
         self.mouse_toolbar = QToolBar("Mouse tools")
@@ -337,6 +368,93 @@ class MainWindow(QMainWindow):
         set_save_action.triggered.connect(self.set_save_path)
         file_menu.addAction(set_save_action)
 
+        set_filename_action = QAction("Set filename", self)
+        set_filename_action.setStatusTip("Set filename for saved, data, video and image files")
+        set_filename_action.triggered.connect(self.set_default_filename)
+        file_menu.addAction(set_filename_action)
+
+        # Add command to save the data
+        save_data_action = QAction("Save data", self)
+        save_data_action.setStatusTip("Save data to an npy file")
+        save_data_action.triggered.connect(self.dump_data)
+        file_menu.addAction(save_data_action)
+
+    def dump_data(self):
+        text, ok = QInputDialog.getText(self, 'Filename dialog', 'Set name for data to be saved:')
+        if not ok:
+            print("No valid name entered")
+            return
+        path = self.c_p['recording_path'] + '/' + text
+        """
+        save_data = {}
+        for channel_name in self.data_channels:
+            channel = self.data_channels[channel_name]
+            save_data[channel.name] = channel.get_data(channel.max_retrivable)
+        """
+        print(f"Saving data to {path}")
+        np.save(path,  self.data_channels, allow_pickle=True)
+
+    def action_menu(self):
+        action_menu = self.menu.addMenu("Actions")
+
+        self.save_position_action = QAction("Save position", self)
+        self.save_position_action.setStatusTip("Save current position")
+        self.save_position_action.triggered.connect(self.save_position)
+        action_menu.addAction(self.save_position_action)
+
+        self.saved_positions_submenu = action_menu.addMenu("Saved positions")
+
+        for idx in range(len(self.c_p['saved_positions'])):
+            self.add_position(idx)
+
+    def add_position(self,idx):
+        # Adds position to submenu
+        position_command = partial(self.goto_position, idx)
+        position_action = QAction(self.c_p['saved_positions'][idx][0], self)
+        position_action.setStatusTip(f"Move to saved position {self.c_p['saved_positions'][idx][0]}")
+        position_action.triggered.connect(position_command)
+        self.saved_positions_submenu.addAction(position_action) # Check how to remove this
+        # TODO add a remove position option as well as rename and check position values.
+
+    def set_default_filename(self):
+        text, ok = QInputDialog.getText(self, 'Filename dialog', 'Enter name of your files:')
+        if ok:
+            self.video_idx = 0
+            self.c_p['image_idx'] = 0
+            self.c_p['filename'] = text
+            self.c_p['video_name'] = text + '_video' + str(self.video_idx)
+            print(f"Filename is now {text}")
+
+    def save_position(self):
+        if not self.c_p['minitweezers_connected']:
+            x = self.c_p['stepper_current_position'][0]
+            y = self.c_p['stepper_current_position'][1]
+            z = 0
+        else:
+            x = self.data_channels['Motor_x_pos'].get_data(1)[0]
+            y = self.data_channels['Motor_y_pos'].get_data(1)[0]
+            z = self.data_channels['Motor_z_pos'].get_data(1)[0]
+
+        text, ok = QInputDialog.getText(self, 'Save position dialog', 'Enter name of position:')
+        if ok:
+            self.c_p['saved_positions'].append([text, x, y, z])
+            print(f"Saved position {x}, {y} as position: {text}")
+            self.add_position(len(self.c_p['saved_positions'])-1)
+        else:
+            print("No position saved")
+
+    def goto_position(self,idx):
+        if idx>len(self.c_p['saved_positions']):
+            return
+        # TODO make it use same code for both the options for the motors
+        if self.c_p['minitweezers_connected']:
+            self.c_p['minitweezers_target_pos'][0] = self.c_p['saved_positions'][idx][1]
+            self.c_p['minitweezers_target_pos'][1] = self.c_p['saved_positions'][idx][2]
+            self.c_p['minitweezers_target_pos'][2] = self.c_p['saved_positions'][idx][3]
+            self.c_p['move_to_location'] = True
+        else:
+            self.c_p['stepper_target_position'][0:2] = self.c_p['saved_positions'][idx][1:3]
+
     def drop_down_window_menu(self):
         # Create windows drop down menu
         window_menu = self.menu.addMenu("Windows")
@@ -386,6 +504,12 @@ class MainWindow(QMainWindow):
         self.open_channel_viewer.setCheckable(False)
         window_menu.addAction(self.open_channel_viewer)
 
+        self.auto_controller_action = QAction("Auto controller", self)
+        self.auto_controller_action.setToolTip("Opens a window for interfacing the auto controller.")
+        self.auto_controller_action.triggered.connect(self.openAutoControllerWidnow)
+        self.auto_controller_action.setCheckable(False)
+        window_menu.addAction(self.auto_controller_action)
+
     def openPlanktonViwer(self):
         self.planktonView = PlanktonViewer(self.c_p)
 
@@ -403,6 +527,7 @@ class MainWindow(QMainWindow):
     def open_thorlabs_motor_control_window(self):
         self.MCW_T = MotorControlWidget.ThorlabsMotorWindow(self.c_p)
         self.MCW_T.show()
+
     def set_image_format(self, image_format):
         self.c_p['image_format'] = image_format
         
@@ -431,6 +556,8 @@ class MainWindow(QMainWindow):
         # Need to add somehting to indicate the number of frames left to save when recording.
         self.c_p['recording'] = not self.c_p['recording']
         if self.c_p['recording']:
+            self.c_p['video_name'] = self.c_p['filename'] + '_video' + str(self.video_idx)
+            self.video_idx += 1
             self.record_action.setToolTip("Turn OFF recording.")
         else:
             self.record_action.setToolTip("Turn ON recording.")
@@ -439,7 +566,7 @@ class MainWindow(QMainWindow):
         # Captures a snapshot of what the camera is viewing and saves that
         # in the fileformat specified by the image_format parameter.
         idx = str(self.c_p['image_idx'])
-        filename = self.c_p['recording_path'] + '/image_' + idx +'.'+\
+        filename = self.c_p['recording_path'] + '/'+self.c_p['filename']+'image_' + idx +'.'+\
             self.c_p['image_format']
         if self.c_p['image_format'] == 'npy':
             np.save(filename[:-4], self.c_p['image'])
@@ -507,6 +634,10 @@ class MainWindow(QMainWindow):
         self.PI_window = PIStageWidget(self.c_p)
         self.PI_window.show()
 
+    def openAutoControllerWidnow(self):
+        self.auto_controller_window = AutoController.AutoControlWidget(self.c_p)
+        self.auto_controller_window.show()
+
     def DataWindow(self):
         self.data_window= SaveDataWindow(self.c_p, self.data_channels)
         self.data_window.show()
@@ -533,6 +664,8 @@ class MainWindow(QMainWindow):
             self.CameraThread.join()
         if self.TemperatureThread is not None:
             self.TemperatureThread.join()
+        if self.PortentaReaderT is not None:
+            self.PortentaReaderT.join()
         if self.PICReaderT is not None:
             self.PICReaderT.join()
         if self.PICWriterT is not None:
@@ -593,59 +726,3 @@ if __name__ == '__main__':
     w.show()
     app.exec()
     w.c_p['program_running'] = False
-
-
-
-"""
-        
-        
-    def create_camera_toolbar(self):
-        self.camera_toolbar = QToolBar("Camera tools")
-        self.addToolBar(self.camera_toolbar)
-        # self.add_camera_actions(self.camera_toolbar)
-        self.zoom_action = QAction("Zoom out", self)
-        self.zoom_action.setToolTip("Resets the field of view of the camera.")
-        self.zoom_action.triggered.connect(self.ZoomOut)
-        self.zoom_action.setCheckable(False)
-
-        self.record_action = QAction("Record video", self)
-        self.record_action.setToolTip("Turn ON recording.")
-        self.record_action.setShortcut('Ctrl+R')
-        self.record_action.triggered.connect(self.ToggleRecording)
-        self.record_action.setCheckable(True)
-
-        self.snapshot_action = QAction("Snapshot", self)
-        self.snapshot_action.setToolTip("Take snapshot of camera view.")
-        self.snapshot_action.setShortcut('Shift+S')
-        self.snapshot_action.triggered.connect(self.snapshot)
-        self.snapshot_action.setCheckable(False)
-
-        self.open_plot_window = QAction("Open plotter", self)
-        self.open_plot_window.setToolTip("Open live plotting window.")
-        self.open_plot_window.triggered.connect(self.show_new_window)
-        self.open_plot_window.setCheckable(False)
-
-        self.set_exp_tim = QAction("Set exposure time", self)
-        self.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
-        self.set_exp_tim.triggered.connect(self.set_exposure_time)
-        self.set_exp_tim.setCheckable(False)
-        
-        self.camera_toolbar.addAction(self.zoom_action)
-        self.camera_toolbar.addAction(self.record_action)
-        self.camera_toolbar.addAction(self.snapshot_action)
-        
-        self.exposure_time_LineEdit = QLineEdit()
-        self.exposure_time_LineEdit.setValidator(QDoubleValidator(0.99,99.99,2))
-        self.exposure_time_LineEdit.setText(str(self.c_p['exposure_time']))
-        self.camera_toolbar.addWidget(self.exposure_time_LineEdit)
-        self.camera_toolbar.addAction(self.set_exp_tim)
-
-        # TODO add offset and label to this        
-        self.gain_LineEdit = QLineEdit()
-        self.gain_LineEdit.setToolTip("Set software gain on displayed image.")
-        self.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
-        self.gain_LineEdit.setText(str(self.c_p['image_gain']))
-        self.gain_LineEdit.textChanged.connect(self.set_gain)
-        self.camera_toolbar.addWidget(self.gain_LineEdit)
-
-"""
