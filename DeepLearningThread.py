@@ -8,7 +8,7 @@ Created on Mon Jan  9 14:48:59 2023
 import torch
 import cv2
 import sys
-
+# Todo remove deeptrack
 import deeptrack as dt
 import tensorflow as tf
 import numpy as np
@@ -40,13 +40,17 @@ def torch_unet_prediction(model, image, device, fac=4, threshold=150):
     rescaled_image = cv2.resize(image, dsize=new_size, interpolation=cv2.INTER_CUBIC)
     s = np.shape(rescaled_image)
     rescaled_image = rescaled_image[:s[0]-s[0]%32, :s[1]-s[1]%32]
+    if np.shape(rescaled_image)[0] < 100 or np.shape(rescaled_image)[1] <100:
+        return np.array([])
     # TODO do more of this in pytorch which is faster since it works on GPU
     rescaled_image = np.float32(np.reshape(rescaled_image,[1,1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1]]))
     predicted_image = model(torch.tensor(rescaled_image).to(device))
     resulting_image = predicted_image.detach().cpu().numpy()
     x,y,_ = fpt.find_particle_centers(np.array(resulting_image[0,0,:,:]), threshold)
-    
-    return fac*np.array(x), fac*np.array(y)
+    ret = []
+    for x_,y_ in zip(x,y):
+        ret.append([x_*fac,y_*fac])
+    return np.array(ret)
 
 def load_torch_unet(model_path):
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -118,25 +122,8 @@ class DeepLearningAnalyserLDS(Thread):
             # TODO use PIL rescale and not cv2, may make a difference!
             training_data = cv2.resize(training_data, dsize=(64,64), interpolation=cv2.INTER_CUBIC)
         training_data = dt.Value(training_data)
-        """
-        train_set =   (
-        dt.Value(crop)
-        >> dt.Affine(scale=lambda:np.random.uniform(0.7, 1.4, 2), translate=lambda:np.random.uniform(-2, 2, 2))
-        >> dt.AveragePooling((downsample, downsample, 1))
-        >> dt.Add(lambda: np.random.randn() * 0.2)
-        >> dt.Multiply(lambda: np.random.uniform(0.25, 1.1))
-        >> dt.Gaussian(sigma=lambda:np.random.uniform(0, 0.04))  
-        
-        )
-        """
         
         self.c_p['model'].fit(training_data, epochs=self.c_p['epochs'], batch_size=8) # Default
-        """
-        while (self.c_p['epochs_trained'] < self.c_p['epochs']) and self.c_p['program_running']:
-            self.c_p['model'].fit(training_data, epochs=1, batch_size=8)
-            self.c_p['epochs_trained'] += 1
-        self.c_p['epochs_trained'] = 0        
-        """
 
     def setModel(self, model):
         self.c_p['model'] = model
@@ -171,8 +158,8 @@ class DeepLearningAnalyserLDS(Thread):
         
         if self.c_p['network'] == "DeepTrack Unet":
             return self.make_unet_prediction()
-        if self.c_p['network'] == "pytorch Unet":
-            return torch_unet_prediction(self.c_p['model'], self.c_p['image'], self.device)
+        if self.c_p['network'] == "Pytorch Unet":
+            return torch_unet_prediction(self.c_p['model'], self.c_p['image'], self.c_p['device'] ) 
 
         # Prepare the image for prediction
         data = np.array(self.c_p['image'])
@@ -191,7 +178,7 @@ class DeepLearningAnalyserLDS(Thread):
             print("Deeptrack error \n", e)
             # Get the error "h = 0 is ambiguous, use local_maxima() instead?"
             return np.array([[300,300]])
-        return np.array(positions[0]) / self.c_p['prescale_factor'] / self.c_p['image_scale']
+        return np.array(positions[0]) / self.c_p['prescale_factor']# / self.c_p['image_scale'] Using pixels of camera as default unit
 
     def run(self):
         
@@ -213,20 +200,14 @@ class DeepLearningControlWidget(QWidget):
         self.c_p = c_p
         layout = QVBoxLayout()
         
-        self.label = QLabel("Deep larning controller")
+        self.label = QLabel("Deep learning controller")
         layout.addWidget(self.label)
-
-        """
-        self.SpeedLineEdit = QLineEdit()
-        self.SpeedLineEdit.setValidator(QIntValidator(0,200))
-        self.SpeedLineEdit.setText(str(self.motor_speed))
-        self.SpeedLineEdit.textChanged.connect(self.set_motor_speed)
-        layout.addWidget(self.SpeedLineEdit) 
-        """
+        self.setWindowTitle("Deep learning controller")
 
         self.toggle_tracking_button = QPushButton('Tracking on')
         self.toggle_tracking_button.pressed.connect(self.toggle_tracking)
         self.toggle_tracking_button.setCheckable(True)
+        self.toggle_tracking_button.setChecked(self.c_p['tracking_on'])
         layout.addWidget(self.toggle_tracking_button)
 
         self.training_image_button = QPushButton('Display training image')
@@ -244,10 +225,15 @@ class DeepLearningControlWidget(QWidget):
         self.load_network_button.setCheckable(False)
         layout.addWidget(self.load_network_button)
 
-        self.load_unet_button = QPushButton('Load U-Net')
+        self.load_unet_button = QPushButton('Load deeptrack U-Net')
         self.load_unet_button.pressed.connect(self.load_deeptrack_unet)
         self.load_unet_button.setCheckable(False)
         layout.addWidget(self.load_unet_button)
+
+        self.load_pytorch_unet_button = QPushButton('Load pytorch U-Net')
+        self.load_pytorch_unet_button.pressed.connect(self.load_pytorch_unet)
+        self.load_pytorch_unet_button.setCheckable(False)
+        layout.addWidget(self.load_pytorch_unet_button)
 
         self.save_network_button = QPushButton('Save network')
         self.save_network_button.pressed.connect(self.save_network)
@@ -257,12 +243,13 @@ class DeepLearningControlWidget(QWidget):
         self.setLayout(layout)
 
     def save_network(self):
+        # Not finished
         filename = QFileDialog.getSaveFileName(self, 'Save network',
             self.c_p['recording_path'],"Network (*.h5)")
         print(f"Filename for saving {filename} .")
     
     def load_network(self):
-        filename = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
+        filename = QFileDialog.get(self, 'Load network', self.c_p['recording_path'])
         print(f"You want to open network {filename}")
         backend = tf.keras.models.load_model(filename) 
         self.c_p['model'] = dt.models.LodeSTAR(backend.model) 
@@ -277,8 +264,10 @@ class DeepLearningControlWidget(QWidget):
             self.c_p['network'] = "DeepTrack Unet"
             
     def load_pytorch_unet(self):
-        network_name = QFileDialog.getExistingDirectory(self, 'Load network', self.c_p['recording_path'])
-        self.c_p['model'], self.device  = load_torch_unet(network_name)
+
+        network_name = QFileDialog.getOpenFileName(self, 'Load network')
+        print(f"Opening network {network_name[0]}")
+        self.c_p['model'], self.c_p['device']  = load_torch_unet(network_name[0])
         self.c_p['network'] = "Pytorch Unet"
 
 

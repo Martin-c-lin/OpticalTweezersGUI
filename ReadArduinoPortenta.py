@@ -8,7 +8,7 @@ from PyQt6.QtCore import QTimer
 from threading import Thread
 import numpy as np
 import serial
-from time import sleep
+from time import sleep, time
 
 class PortentaComms(Thread):
 
@@ -25,8 +25,9 @@ class PortentaComms(Thread):
             print(ex)
         print('Serial channel opened')
         self.data_channels = data_channels
-        self.outdata = np.uint8(np.zeros(32))
+        self.outdata = np.uint8(np.zeros(48))
         self.indata = np.uint8(np.zeros(64))
+        self.start_time = time()
 
     def send_data(self):
         """
@@ -93,6 +94,65 @@ class PortentaComms(Thread):
             self.serial_channel = None
             self.c_p['minitweezers_connected'] = False
 
+    def send_data_fast(self):
+        """
+        Sends data to the portenta.
+        """
+        if self.serial_channel is None:
+            try:
+                self.serial_channel = serial.Serial(self.c_p['COM_port'], baudrate=5000000, timeout=.001, write_timeout=0.001)
+                self.c_p['minitweezers_connected'] = True
+                print("Reconnected")
+            except Exception as ex:
+                self.serial_channel = None
+            return
+
+        self.serial_channel.reset_output_buffer()
+
+        # Start bytes for the portenta
+        self.outdata[0:2] = [123, 123]
+
+        # Send the target position and speed
+        for i in range(3):
+            self.outdata[2 + i * 2] = self.c_p['minitweezers_target_pos'][i] >> 8
+            self.outdata[3 + i * 2] = self.c_p['minitweezers_target_pos'][i] & 0xFF
+            self.outdata[8 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) >> 8
+            self.outdata[9 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) & 0xFF
+
+        # Send the piezo voltages
+        for i in range(2):
+            self.outdata[14 + i * 2] = self.c_p['piezo_A'][i] >> 8
+            self.outdata[15 + i * 2] = self.c_p['piezo_A'][i] & 0xFF
+            self.outdata[18 + i * 2] = self.c_p['piezo_B'][i] >> 8
+            self.outdata[19 + i * 2] = self.c_p['piezo_B'][i] & 0xFF
+        #print(self.outdata[14:21]) Correct
+        self.outdata[22] = self.c_p['motor_travel_speed'] >> 8
+        self.outdata[23] = self.c_p['motor_travel_speed'] & 0xFF
+        self.outdata[24] = self.c_p['portenta_command_1']
+        self.c_p['portenta_command_1'] = 0
+        self.outdata[25] = self.c_p['portenta_command_2']
+        # End bytes for the portenta
+        self.outdata[26] = self.c_p['PSD_means'][0] >> 8
+        self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
+        self.outdata[28] = self.c_p['PSD_means'][1] >> 8
+        self.outdata[29] = self.c_p['PSD_means'][1] & 0xFF
+
+        self.outdata[30] = self.c_p['PSD_means'][2] >> 8
+        self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
+        self.outdata[32] = self.c_p['PSD_means'][3] >> 8
+        self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
+
+        #self.outdata[30:32] = [125, 125]
+
+        try:
+            self.serial_channel.write(self.outdata)
+        except serial.serialutil.SerialTimeoutException as e:
+            pass
+        except serial.serialutil.SerialException as e:
+            print(f"Serial exception: {e}")
+            self.serial_channel = None
+            self.c_p['minitweezers_connected'] = False
+
     def get_data(self):
         if self.serial_channel is None:
             #print("No serial channel!")
@@ -117,10 +177,28 @@ class PortentaComms(Thread):
         for idx, channel in enumerate(self.c_p['pic_channels']):
             number = self.indata[2*idx+2] * 256 + self.indata[2*idx+3] # Is it 256 or 256?
             # TODO don't put one number at a time
+            # if channel not in ['T_time','Time_micros_high','Time_micros_low','Photodiode_A','Photodiode_B']
+
             self.data_channels[channel].put_data([number])
 
     def combine_bytes(self, high_byte, low_byte):
         return (high_byte << 8) | low_byte
+
+    def calc_quote(self, quote, channel1, channel2):
+        D1 = self.data_channels[channel1].data[self.data_channels[channel1].index-1]   #get_data_spaced(1)[0] # Is data.[index] significantly faster?
+        D2 = self.data_channels[channel2].data[self.data_channels[channel2].index-1]  #get_data_spaced(1)[0]
+        if D2 != 0:
+            self.data_channels[quote].put_data([D1/D2])
+        else:
+            self.data_channels[quote].put_data([0])
+
+    def calculate_quotes(self):
+        self.calc_quote('F_A_X','PSD_A_F_X','PSD_A_F_sum')
+        self.calc_quote('F_A_Y','PSD_A_F_Y','PSD_A_F_sum')
+        self.calc_quote('F_B_X','PSD_B_F_X','PSD_B_F_sum')
+        self.calc_quote('F_B_Y','PSD_B_F_Y','PSD_B_F_sum')
+        self.calc_quote('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum')
+        self.calc_quote('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum')
 
     def get_data_new(self):
         if self.serial_channel is None:
@@ -150,20 +228,38 @@ class PortentaComms(Thread):
 
             for idx, channel in enumerate(self.c_p['pic_channels']):
                 number = self.combine_bytes(chunk[2 * idx + 2], chunk[2 * idx + 3])
-                self.data_channels[channel].put_data([number])
+                if channel in self.c_p['offset_channels']:
+                    self.data_channels[channel].put_data([number-32768])
+                elif channel == 'Time_micros_high':# ['T_time','Time_micros_high','Time_micros_low']:
+                    T = number * 2**16
+                elif channel == 'Time_micros_low':
+                    T += number
+                    self.data_channels['T_time'].put_data([T])
+                elif channel == 'T_time':
+                    pass
+                else:
+                    self.data_channels[channel].put_data([number])
+            # Check if message was received
+            if self.data_channels['message'] != 0:
+                self.c_p['portenta_command_1'] = 0
+            #Addding computers own time
+            self.data_channels['Time'].put_data([time() - self.start_time])
+            self.calculate_quotes()
+
 
     def connect_port(self):
         # TODO cannot restart program without restarting the portenta.
         pass
 
     def move_to_location(self):
-        # This should be done in a different thread maybe.
+        # TODO This should be done in a different thread maybe.
         dist_x = self.c_p['minitweezers_target_pos'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
         dist_y = self.c_p['minitweezers_target_pos'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
         dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
-
+        # print(dist_x, dist_y, dist_z)
+        # Changed the signs of this function
         if dist_x**2>100:
-            self.c_p['motor_x_target_speed'] = self.c_p['motor_travel_speed'] if dist_x > 0 else -self.c_p['motor_travel_speed']
+            self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'] if dist_x > 0 else self.c_p['motor_travel_speed']
         else:
             self.c_p['motor_x_target_speed'] = 0
 
@@ -171,13 +267,14 @@ class PortentaComms(Thread):
             self.c_p['motor_y_target_speed'] = self.c_p['motor_travel_speed'] if dist_y > 0 else -self.c_p['motor_travel_speed']
         else:
             self.c_p['motor_y_target_speed'] = 0
-
+        """
+        # Z movement is dangerous, wait with that.
         if dist_z**2>100:
-            self.c_p['motor_z_target_speed'] = self.c_p['motor_travel_speed'] if dist_z > 0 else -self.c_p['motor_travel_speed']
+            self.c_p['motor_z_target_speed'] = -self.c_p['motor_travel_speed'] if dist_z > 0 else self.c_p['motor_travel_speed']
         else:
             self.c_p['motor_z_target_speed'] = 0
-
-        if dist_x**2+dist_y**2+dist_z**2<300:
+        """
+        if dist_x**2+dist_y**2<200: #+dist_z**2<300: Removed z-dependence
             self.c_p['motor_x_target_speed'] = 0
             self.c_p['motor_y_target_speed'] = 0
             self.c_p['motor_z_target_speed'] = 0
@@ -189,9 +286,11 @@ class PortentaComms(Thread):
         while self.c_p['program_running']:
             if self.c_p['move_to_location']:
                 self.move_to_location()
-            self.send_data()
+            # Idea only send data when there is actually something to send, don't send while
+            # recording an experiment to get sampling more consistent.
+            self.send_data_fast() # Have also an older well tested but probably slower version.
             self.get_data_new()
-            sleep(1e-7)
+            sleep(1e-5)
         if self.serial_channel is not None:
             self.serial_channel.close()
             

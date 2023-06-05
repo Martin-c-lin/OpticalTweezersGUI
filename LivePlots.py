@@ -26,6 +26,7 @@ from functools import partial
 Colors = {
     'red': (255,0,0),
     'blue': (0,0,255),
+    'orange': (255,165,0),
     'navy blue': (0,0,128),
     'green': (0,255,0),
     'gray': (150,150,150),
@@ -33,6 +34,9 @@ Colors = {
     'black': (0,0,0),
     'cyan': (0,255,255),
     'yellow': (255,255,0),
+    'pink': (255,192,203),
+    'purple': (128,0,128),
+    'brown': (205, 127, 50),
     'Transparent': (0,0,0,0),
     }
 
@@ -250,10 +254,9 @@ class PlotWindow(QMainWindow):
     # TODO have the last point entered be a different color/size of the others
     # TODO Have color of markers independent of color of the line between them
     # TODO Make it possible to label the liveplots(instead of calling them just plot 0, plot 1 etc.
-    # TODO add legend.
-    def __init__(self, c_p, data, x_keys, y_keys):
+    def __init__(self, c_p, data, x_keys, y_keys, aspect_locked=False, grid_on=False, title="Data plotter"):
         super().__init__()
-        
+        # TODO fix a nicer initalization of the plots
         self.c_p = c_p
         self.data = data
         self.graphWidget = pg.PlotWidget()
@@ -263,19 +266,25 @@ class PlotWindow(QMainWindow):
         self.y = [randint(0, 100) for _ in range(100)]  # 100 data points. todo remove if not really needed
         self.y2 = [randint(0, 100) for _ in range(100)]  # 100 data points
         self.default_plot_length = 500
+        self.color_idx = 0 # to keep track of which color to use next
+
+        self.aspect_locked = aspect_locked
+        self.graphWidget.setAspectLocked(self.aspect_locked,1)
+        self.graphWidget.showGrid(x=grid_on, y=grid_on, alpha=0.5)  
         # Set up plot data
 
         self.plot_running = True
         self.graphWidget.setBackground('k')
-        self.setWindowTitle("Data plotter")
+        self.setWindowTitle(title) # Todo make it possible to configure title from the GUI
 
         pen = pg.mkPen(color=Colors['red'])
         self.pen2 = pg.mkPen(color=Colors['green'])
 
+        # Initalizing the plot data
         self.plot_data = {
-            'x':x_keys,
-            'y':y_keys,
-            }# TODO add settings
+            'x':[x for x in x_keys],
+            'y':[y for y in y_keys],
+            }
 
         self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
         self.plot_data['sub_sample'] = np.ones(len(x_keys), int)
@@ -283,7 +292,6 @@ class PlotWindow(QMainWindow):
         self.data_lines = []
         # TODO,have better default plots.
         self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen, name='plot 0'))
-        self.data_lines.append(self.graphWidget.plot(self.x, self.y2, pen=self.pen2, name='plot 1', symbolPen ='w'))
 
         self.timer = QTimer()
         self.timer.setInterval(50) # sets the fps of the timer
@@ -300,7 +308,7 @@ class PlotWindow(QMainWindow):
         self.add_plot_action = QAction("Add plot", self)
         self.add_plot_action.setToolTip("Adds another plot to the window")
         #add_plot_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
-        add_p = partial(self.add_plot, 'Time', 'Y-force')
+        add_p = partial(self.add_plot, 'T_time', 'PSD_A_F_X')
         self.add_plot_action.triggered.connect(add_p)# self.add_plot)
         self.add_plot_action.setCheckable(False)
 
@@ -313,24 +321,37 @@ class PlotWindow(QMainWindow):
         self.plot_axis_action.setToolTip("Manually change the axis limits.")
         self.plot_axis_action.triggered.connect(self.open_plot_axis_window)
         self.plot_axis_action.setCheckable(False)
+
+        # TODO hide this in a submenu.
+        self.lock_aspect_action = QAction("Lock aspect ratio", self)
+        self.lock_aspect_action.setToolTip("Lock the aspect ratio to have same scale on both axis.")
+        self.lock_aspect_action.triggered.connect(self.lock_aspect_ratio)
+        self.lock_aspect_action.setCheckable(True)
         self.graphWidget.addLegend() # Does not work :/ 
 
         self.toolbar.addAction(self.stop_plot)
         self.toolbar.addAction(self.add_plot_action)
         self.toolbar.addAction(self.plot_axis_action)
         self.toolbar.addAction(self.add_circle_action)
+        self.toolbar.addAction(self.lock_aspect_action)
         self.setCentralWidget(self.graphWidget)
         self.addToolBar(self.toolbar)
         self.create_plot_menus()
         
         # TODO have all the subwindows close automatically when main application close
         # TODO fix label sizes, font and so that they automatically have correct axis
-        self.set_axis_labels()        
+        self.set_axis_labels()
+
+        self.delete_plot(0)
+        
         self.timer.start()
+        for x,y in zip(x_keys, y_keys):
+            self.add_plot(x,y)
+            print(f"Adding plot {x} vs {y}")
 
     def add_circle(self):
         radius=100.0
-        center=[32767.0,32767.0]
+        center=[0,0]
         self._t = np.linspace(0,2*np.pi,100)
         self.x_c = (radius * np.cos(self._t)) + center[0]
         self.y_c = (radius * np.sin(self._t)) + center[1]
@@ -355,10 +376,12 @@ class PlotWindow(QMainWindow):
         self.graphWidget.setLabel('bottom', x_label, color='red', fontsize=200)
         self.graphWidget.addLegend()
 
+    def lock_aspect_ratio(self):
+        self.aspect_locked = not self.aspect_locked
+        self.graphWidget.setAspectLocked(self.aspect_locked,1)
 
 
-
-    def add_plot(self, xname='Time', yname='Y-force'):
+    def add_plot(self, xname='T_time', yname='PSD_A_P_X'):
         # Adds another data line to the plot
         # almost works, problem with it adding extra lines for changing the number of plot points
         
@@ -371,8 +394,10 @@ class PlotWindow(QMainWindow):
         tmp = np.ones(len(self.plot_data['x']), int)
         tmp[:-1] = self.plot_data['sub_sample'][:]
         self.plot_data['sub_sample'] = tmp # Add sub_sample here
-
-        pen = pg.mkPen(color=Colors['red']) # Default color
+        self.color_idx += 1
+        self.color_idx = self.color_idx % len(Colors)
+        key = list(Colors)[self.color_idx]
+        pen = pg.mkPen(color=Colors[key]) # Default color
         # TODO add also symbols here so that also they are saved.
         self.plot_data['pen'].append(pen)
         plot_name = f" {xname} vs {yname}"
@@ -396,6 +421,7 @@ class PlotWindow(QMainWindow):
             self.set_axis_labels()
         self.menu.clear()
         self.create_plot_menus()
+        self.color_idx -= 1
 
     def create_plot_menus(self):
         # Add menu
@@ -425,14 +451,6 @@ class PlotWindow(QMainWindow):
                 set_col.triggered.connect(color_command)
                 color_submenu.addAction(set_col)
 
-            y_data_submenu = Plot_1_menu.addMenu("Y-data")
-            for data_idx, y in enumerate(self.data):
-                data_command = partial(self.set_y_data, idx, y)
-                set_data = QAction(y, self)
-                set_data.setStatusTip("Set y-data")
-                set_data.triggered.connect(data_command)
-                y_data_submenu.addAction(set_data)
-
             x_data_submenu = Plot_1_menu.addMenu("X-data")
             for data_idx, x in enumerate(self.data):
                 data_command = partial(self.set_x_data, idx, x)
@@ -440,6 +458,14 @@ class PlotWindow(QMainWindow):
                 set_data.setStatusTip("Set x-data")
                 set_data.triggered.connect(data_command)
                 x_data_submenu.addAction(set_data)
+
+            y_data_submenu = Plot_1_menu.addMenu("Y-data")
+            for data_idx, y in enumerate(self.data):
+                data_command = partial(self.set_y_data, idx, y)
+                set_data = QAction(y, self)
+                set_data.setStatusTip("Set y-data")
+                set_data.triggered.connect(data_command)
+                y_data_submenu.addAction(set_data)
 
             plot_symbol_submenu = Plot_1_menu.addMenu("Plot symbol")
             for symbol in Symbols:
@@ -497,7 +523,7 @@ class PlotWindow(QMainWindow):
     def update_plot_data(self):
         # If the program has closed then we should also close this window
         if self.plot_running:
-            for idx,_ in enumerate(self.plot_data['x']):
+            for idx in range(len(self.data_lines)):# enumerate(self.plot_data['x']):
                 x_key = self.plot_data['x'][idx]
                 y_key = self.plot_data['y'][idx]
                 L = int(self.plot_data['L'][idx])
@@ -511,8 +537,8 @@ class PlotWindow(QMainWindow):
                     self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
 
                 except Exception as e:
-                    print(x_key, y_key)
-                    print('Plotting error: Here is the error', e)
+                    print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
+                    print('Plotting error:', e)
 
     def toggle_live_plotting(self):
         self.plot_running = not self.plot_running

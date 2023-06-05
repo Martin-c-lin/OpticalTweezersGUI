@@ -1,9 +1,10 @@
+
 from PyQt6.QtWidgets import (
  QCheckBox, QVBoxLayout, QWidget, QLabel, QTableWidget, QTableWidgetItem
 )
 
 # from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QAction
+from PyQt6.QtGui import QAction, QFont
 from PyQt6.QtCore import QTimer
 
 import numpy as np
@@ -18,14 +19,14 @@ class CurrentValueWindow(QWidget):
         self.c_p = c_p
         self.data_channels = data_channels
         self.setWindowTitle("Data channels current values")
-        self.resize(400, 250)
+        self.resize(800, 800)
 
         self.vBox = QVBoxLayout()
         self.CreateTable()
         self.vBox.addWidget(self.table)        
 
         self.timer = QTimer()
-        self.timer.setInterval(100) # sets the fps of the timer
+        self.timer.setInterval(400) # sets the fps of the timer
         self.timer.timeout.connect(self.set_data)
 
         self.timer.start()
@@ -33,20 +34,53 @@ class CurrentValueWindow(QWidget):
 
     def CreateTable(self):
 
-        self.table = QTableWidget(len(self.data_channels)+1, 4)
-        self.table.setHorizontalHeaderLabels(["Channel", "Value", "Unit", "Save"])
-        
-        for idx,channel in enumerate(self.data_channels):
+        self.table = QTableWidget(len(self.data_channels)+1, 6)
+        self.table.setHorizontalHeaderLabels(["Channel", "Value", "Mean", "Standard dev", "Unit", "Save"])
 
-            self.table.setItem(idx,0, QTableWidgetItem(f"{self.data_channels[channel].name}"))
-            self.table.setItem(idx,1, QTableWidgetItem(f"{self.data_channels[channel].get_data(1)}"))
-            self.table.setItem(idx,2, QTableWidgetItem(f"{self.data_channels[channel].unit}"))
-            # self.table.setItem(idx,3, QTableWidgetItem(f"{self.data_channels[channel].save}"))
-    
+        for idx, channel in enumerate(self.data_channels):
+            self.table.setItem(idx, 0, QTableWidgetItem(f"{self.data_channels[channel].name}"))
+            self.table.setItem(idx, 1, QTableWidgetItem(f"{self.data_channels[channel].get_data(1)}"))
+            data = self.data_channels[channel].get_data(self.c_p['averaging_interval'])
+            if data is not None and len(data) > 1:
+                self.table.setItem(idx, 2, QTableWidgetItem(f"{np.mean(data)}"))
+            else:
+                self.table.setItem(idx, 2, QTableWidgetItem(""))
+
+            if data is not None and len(data) > 1:
+                self.table.setItem(idx, 3, QTableWidgetItem(f"{np.std(data)}"))
+            else:
+                self.table.setItem(idx, 3, QTableWidgetItem(""))
+            self.table.setItem(idx,4, QTableWidgetItem(f"{self.data_channels[channel].unit}"))
+
+            # Create a QCheckBox, connect it to the toggle_save method and add it to the table
+            save_checkbox = QCheckBox()
+            save_checkbox.stateChanged.connect(lambda state, ch=channel: self.toggle_save(state, ch))
+            save_checkbox.setChecked(self.data_channels[channel].saving_toggled)
+
+            save_checkbox.setStyleSheet("""
+                QCheckBox::indicator {
+                    width: 30px;
+                    height: 30px;
+                }
+                """)
+            self.table.setCellWidget(idx, 5, save_checkbox)
+
+    def toggle_save(self, state, channel):
+        """
+        Toggle the saving_toggled property of the DataChannel when the checkbox is toggled.
+        """
+        self.data_channels[channel].saving_toggled = bool(state)
+
     def set_data(self):
         
-        for idx,channel in enumerate(self.data_channels):
+        for idx, channel in enumerate(self.data_channels):
+            data = self.data_channels[channel].get_data(self.c_p['averaging_interval'])
             self.table.setItem(idx,1, QTableWidgetItem(f"{self.data_channels[channel].get_data(1)}"))
-
-
-    
+            if data is not None and len(data) > 1:
+                self.table.setItem(idx,2, QTableWidgetItem(f"{round(np.mean(data),6)}"))
+            else:
+                self.table.setItem(idx,2, QTableWidgetItem(f"{data}"))
+            if data is not None and len(data) > 1:
+                self.table.setItem(idx,3, QTableWidgetItem(f"{round(np.std(data),6)}"))
+            else:
+                self.table.setItem(idx,3, QTableWidgetItem(f"{data}"))

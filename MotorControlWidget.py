@@ -20,7 +20,7 @@ from functools import partial
 from threading import Thread
 from ThorlabsMotor import MotorThreadV2, PiezoThread
 from CustomMouseTools import MouseInterface
-from time import time
+from time import time, sleep
 
 # Maybe have this as a QThread?
 class MotorControllerWindow(QWidget):
@@ -39,7 +39,7 @@ class MotorControllerWindow(QWidget):
         layout.addWidget(self.label)
 
         self.SpeedLineEdit = QLineEdit()
-        self.SpeedLineEdit.setValidator(QIntValidator(0,100))
+        self.SpeedLineEdit.setValidator(QIntValidator(0,32767))
         self.SpeedLineEdit.setText(str(self.motor_speed))
         self.SpeedLineEdit.textChanged.connect(self.set_motor_speed)
         layout.addWidget(self.SpeedLineEdit) 
@@ -49,34 +49,38 @@ class MotorControllerWindow(QWidget):
         self.up_button.pressed.connect(self.move_up)
         self.up_button.released.connect(self.stop_y)
         self.up_button.setCheckable(False)
+        self.up_button.setShortcut("left")
         layout.addWidget(self.up_button)
 
         self.down_button = QPushButton('RIGHT')
         self.down_button.pressed.connect(self.move_down)
         self.down_button.released.connect(self.stop_y)
         self.down_button.setCheckable(False)
+        self.down_button.setShortcut("right")
         layout.addWidget(self.down_button)
 
 
-        self.right_button = QPushButton('DOWN')
+        self.right_button = QPushButton('UP')
         self.right_button.pressed.connect(self.move_right)
         self.right_button.released.connect(self.stop_x)
+        self.right_button.setShortcut("up")
         self.right_button.setCheckable(False)
         layout.addWidget(self.right_button)
 
-        self.left_button = QPushButton('UP')
+        self.left_button = QPushButton('DOWN')
         self.left_button.pressed.connect(self.move_left)
+        self.left_button.setShortcut("down")
         self.left_button.released.connect(self.stop_x)
         self.left_button.setCheckable(False)
         layout.addWidget(self.left_button)
 
-        self.objective_forward_button = QPushButton('Objective forward')
+        self.objective_forward_button = QPushButton('Sample forward')
         self.objective_forward_button.pressed.connect(self.objective_forward)
         self.objective_forward_button.released.connect(self.objective_stop)
         self.objective_forward_button.setCheckable(False)
         layout.addWidget(self.objective_forward_button)
 
-        self.objective_backward_button = QPushButton('Objective backward')
+        self.objective_backward_button = QPushButton('Sample backward')
         self.objective_backward_button.pressed.connect(self.objective_backward)
         self.objective_backward_button.released.connect(self.objective_stop)
         self.objective_backward_button.setCheckable(False)
@@ -86,9 +90,14 @@ class MotorControllerWindow(QWidget):
         
     def set_motor_speed(self, speed):
         # Maybe have this toggleable
-        self.motor_speed = int(speed)
+        if np.abs(int(speed)) < 32760:
+            self.motor_speed = int(speed)
+        else:
+            self.motor_speed = int(32760)
+
     # TODO check if x and y have been mixed up somewhere
     def move_up(self):
+        # TODO fix naming of these!
         self.c_p['motor_x_target_speed'] = self.motor_speed
     def stop_y(self):
         self.c_p['motor_x_target_speed'] = 0
@@ -119,13 +128,9 @@ class ThorlabsMotorWindow(QWidget):
         layout = QVBoxLayout()
         self.motor_speed = 1
         self.y_movement = 0
-        self.motor_x = None
-        self.motor_y = None
-        self.piezo_z = None
         
         self.label = QLabel("Motor controller")
         layout.addWidget(self.label)
-
         
         self.SpeedLineEdit = QLineEdit()
         self.SpeedLineEdit.setValidator(QIntValidator(0,200))
@@ -137,23 +142,24 @@ class ThorlabsMotorWindow(QWidget):
         self.start_x = QPushButton('start x thread')
         self.start_x.pressed.connect(self.start_motor_x)
         self.start_x.setCheckable(False)
+        col_x = 'green' if self.check_connected(0) else 'red'
+        self.start_x.setStyleSheet(f"background-color : {col_x}")
         layout.addWidget(self.start_x)
 
         self.start_y = QPushButton('start y thread')
         self.start_y.pressed.connect(self.start_motor_y)
-        #self.start_y.released.connect(self.stop_y)
         self.start_y.setCheckable(False)
+        col_y = 'green' if self.check_connected(1) else 'red'
+        self.start_y.setStyleSheet(f"background-color : {col_y}")
         layout.addWidget(self.start_y)
         
         self.start_z = QPushButton('start z thread')
         self.start_z.pressed.connect(self.start_piezo_z)
         self.start_z.setCheckable(False)
-        layout.addWidget(self.start_z)
+        # layout.addWidget(self.start_z) # Does not work great yet
 
-        
         self.print_position_button = QPushButton('Print position')
-        self.print_position_button.pressed.connect(self.motor_y_pos)
-        # self.print_position_button.released.connect(self.stop_y)
+        self.print_position_button.pressed.connect(self.print_current_pos)
         self.print_position_button.setCheckable(False)
         layout.addWidget(self.print_position_button)
 
@@ -167,17 +173,70 @@ class ThorlabsMotorWindow(QWidget):
         self.move_down_button.setCheckable(False)
         layout.addWidget(self.move_down_button)
 
+        self.move_right_button = QPushButton('Move right')
+        self.move_right_button.pressed.connect(self.move_right)
+        self.move_right_button.setCheckable(False)
+        layout.addWidget(self.move_right_button)
+
+        self.move_left_button = QPushButton('Move left')
+        self.move_left_button.pressed.connect(self.move_left)
+        self.move_left_button.setCheckable(False)
+        layout.addWidget(self.move_left_button)
+
+        # TODO add connection visuals option
+
+        self.disconnect_motor_x_b = QPushButton('Disconnect x')
+        self.disconnect_motor_x_b.pressed.connect(self.disconnect_motor_x)
+        self.disconnect_motor_x_b.setCheckable(False)
+        layout.addWidget(self.disconnect_motor_x_b)
+
+        self.disconnect_motor_y_b = QPushButton('Disconnect y')
+        self.disconnect_motor_y_b.pressed.connect(self.disconnect_motor_y)
+        self.disconnect_motor_y_b.setCheckable(False)
+        layout.addWidget(self.disconnect_motor_y_b)
+
         self.setLayout(layout)
         
     def start_motor_y(self):
-        if self.motor_y is None:
-            self.motor_y = MotorThreadV2(channel=1, axis=1, c_p=self.c_p)
-            self.motor_y.start()
+        if self.c_p['thorlabs_threads'][1] is None:
+            self.c_p['thorlabs_threads'][1] = MotorThreadV2(channel=1, axis=1, c_p=self.c_p)
+            self.c_p['thorlabs_threads'][1].start()
+        elif self.c_p['steppers_connected'][1] is False:
+            self.c_p['connect_steppers'][1] = True
+        sleep(0.2)
+        col_y = 'green' if self.check_connected(1) else 'red'
+        self.start_y.setStyleSheet(f"background-color : {col_y}")
             
     def start_motor_x(self):
-        if self.motor_x is None:
-            self.motor_x = MotorThreadV2(channel=0, axis=0, c_p=self.c_p)
-            self.motor_x.start()
+        if self.c_p['thorlabs_threads'][0] is None:
+            self.c_p['thorlabs_threads'][0] = MotorThreadV2(channel=0, axis=0, c_p=self.c_p)
+            self.c_p['thorlabs_threads'][0].start()
+            
+        elif self.c_p['steppers_connected'][0] is False:
+            self.c_p['connect_steppers'][0] = True
+        sleep(0.2)
+        col_x = 'green' if self.check_connected(0) else 'red'
+        self.start_x.setStyleSheet(f"background-color : {col_x}")
+        print("Color set to ", col_x)
+
+    def disconnect_motor_x(self):
+        if self.c_p['thorlabs_threads'][0] is not None:
+            self.c_p['disconnect_motor'][0] = True
+            sleep(0.2)
+            col_x = 'green' if self.check_connected(0) else 'red'
+            self.start_x.setStyleSheet(f"background-color : {col_x}")
+
+    def disconnect_motor_y(self):
+            if self.c_p['thorlabs_threads'][1] is not None:
+                self.c_p['disconnect_motor'][1] = True
+                sleep(0.2)
+                col_y = 'green' if self.check_connected(1) else 'red'
+                self.start_y.setStyleSheet(f"background-color : {col_y}")
+
+    def check_connected(self, axis):
+        if self.c_p['thorlabs_threads'][axis] is None:
+            return False
+        return self.c_p['steppers_connected'][axis]
 
     def set_motor_speed(self, speed):
         try:
@@ -195,23 +254,34 @@ class ThorlabsMotorWindow(QWidget):
         self.c_p['new_stepper_velocity_params'][1] = True        
 
     def start_piezo_z(self):
-        if self.piezo_z is None:
+        if self.c_p['thorlabs_threads'][2] is None:
             serial_no = "97100532"
             channel = 1
-            self.piezo_z = PiezoThread(serial_no, channel, self.c_p)
-            self.piezo_z.start()
+            self.c_p['thorlabs_threads'][2] = PiezoThread(serial_no, channel, self.c_p)
+            self.c_p['thorlabs_threads'][2].start()
             
+
+    def print_current_pos(self):
+        print(f"Motors are at {self.c_p['stepper_current_position']}")
 
     def motor_y_pos(self):
         print(self.c_p['stepper_current_position'][1])
         
     def move_up(self):
-        if self.motor_y is not None:
-            self.c_p['stepper_target_position'][1] += 0.1
+        #if self.motor_y is not None:
+        self.c_p['stepper_target_position'][1] += 0.05
 
     def move_down(self):
-        if self.motor_y is not None:
-            self.c_p['stepper_target_position'][1] -= 0.1
+        #if self.motor_y is not None:
+        self.c_p['stepper_target_position'][1] -= 0.05
+
+    def move_left(self):
+        #if self.motor_y is not None:
+        self.c_p['stepper_target_position'][0] += 0.05
+
+    def move_right(self):
+        #if self.motor_y is not None:
+        self.c_p['stepper_target_position'][0] -= 0.05
 
     def close(self):
         self.motor_y.join()
@@ -278,7 +348,7 @@ class MotorClickMove(MouseInterface):
             print(dy, self.c_p['z_current_position'])
 
     def getToolName(self):
-        return "motor tool"
+        return "Thorlabs motor"
 
     def getToolTip(self):
         return "Move the motors by clicking or dragging on the screen"
@@ -295,7 +365,7 @@ class MinitweezersMouseMove(MouseInterface):
         self.y_prev = 0
         self.z_prev = 0
         self.prev_t = time()
-        self.speed_factor = 2 # TODO make speed more accurate
+        self.speed_factor = 600 # TODO make speed more accurate, also make it adjustable
 
     def mousePress(self):
 
@@ -309,8 +379,12 @@ class MinitweezersMouseMove(MouseInterface):
   
         # Right click -drag
         if self.c_p['mouse_params'][0] == 2:
-            self.x_prev= self.c_p['mouse_params'][1]
-            self.y_prev= self.c_p['mouse_params'][2]
+            if self.x_prev == self.c_p['mouse_params'][1] and self.y_prev == self.c_p['mouse_params'][2]:
+                self.c_p['motor_x_target_speed'] = 0
+                self.c_p['motor_y_target_speed'] = 0
+                return
+            self.x_prev = self.c_p['mouse_params'][1]
+            self.y_prev = self.c_p['mouse_params'][2]
 
         if self.c_p['mouse_params'][0] == 3:
             self.z_0 = self.c_p['mouse_params'][2]
@@ -335,10 +409,10 @@ class MinitweezersMouseMove(MouseInterface):
             return 2
         if 0 > speed > -2:
             return -2
-        if speed > 100:
-            return 100
-        if speed < -100:
-            return  -100
+        if speed > 32767:
+            return 32767
+        if speed < -32767:
+            return  -32767
         return speed
 
     def mouseMove(self):
@@ -353,13 +427,10 @@ class MinitweezersMouseMove(MouseInterface):
 
             dx = (self.c_p['mouse_params'][3] - self.x_prev)#/dt
             dy = (self.c_p['mouse_params'][4] - self.y_prev)#/dt
-            print(dy)
-
             x_speed = self.check_speed(dx * self.speed_factor)
             y_speed = self.check_speed(dy * self.speed_factor)
             self.c_p['motor_x_target_speed'] = int(x_speed)
-            self.c_p['motor_y_target_speed'] = int(-y_speed)
-            #print(f"Y moovement {y_speed}")
+            self.c_p['motor_y_target_speed'] = int(y_speed) # Changed sign here
             self.x_prev = self.c_p['mouse_params'][3]
             self.y_prev = self.c_p['mouse_params'][4]
             
@@ -370,7 +441,7 @@ class MinitweezersMouseMove(MouseInterface):
             self.z_prev = self.c_p['mouse_params'][4]
 
     def getToolName(self):
-        return "motor tool"
+        return "Minitweezers motor"
 
     def getToolTip(self):
         return "Move the motors by clicking or dragging on the screen"

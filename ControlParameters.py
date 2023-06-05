@@ -43,7 +43,7 @@ def default_c_p():
            'image_offset': 0,
            'AOI':[0,1000,0,1000], # Area of interest of camera
            'recording_path': '../Example data/',
-           'bitrate': '30000000', #'300000000',
+           'bitrate': '30000000', # Bitrate of video to be saved
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
            'image_scale': 1,
            'microns_per_pix': 30/5000 * 1e-3, # 5000 pixels per 30 micron roughly, changed to have more movements
@@ -56,36 +56,33 @@ def default_c_p():
            'piezo_pos': [10,10,10],
            
            # PIC reader c_p
-           # TODO add all the necessary channels here. PSDs and motors.
-           'pic_channels':[
-                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+           'pic_channels':[# Channels to read from the controller
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum', # A_P should be on top, switched momentarily to circumvent the PSD_F_A sum issue
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
                             'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
                             'Photodiode_A','Photodiode_B',
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
-                            #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
+                            #
                             'T_time','Time_micros_high','Time_micros_low',
+                            'message',
+                            'dac_ax','dac_ay','dac_bx','dac_by',
+                            #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
                            ],
-                           
-           # Temporary solution to use both PIC and Portenta
-           'old_pic_channels':[
-                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
-                            'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
-                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
-                            'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
-                            'T_time',
-                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
-                            'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
-                           ],
-            
-            'used_pic_channels':[
-                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
-                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',],
-                            
+           'offset_channels':[ # Channels which are sent with an offset due to being either positive or negative
+                            'PSD_A_P_X', 'PSD_A_P_Y',
+                            'PSD_A_F_X', 'PSD_A_F_Y', 
+                            'PSD_B_P_X', 'PSD_B_P_Y', 
+                            'PSD_B_F_X', 'PSD_B_F_Y', 
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
+            'save_idx': 0, # Index of the saved data     
            # Piezo outputs
-           'piezo_A': np.uint16([20_000, 20_000]),
-           'piezo_B': np.uint16([20_000, 20_000]),
+           'averaging_interval': 1000, # How many samples to average over in the data channels window
+           'piezo_A': np.uint16([32768, 32768]),
+           'piezo_B': np.uint16([32768, 32768]),
+           'portenta_command_1': 0, # Command to send to the portenta, zero force etc.
+           'portenta_command_2': 0, # Command to send to the portenta, dac controls
+           'PSD_means':  np.uint16([0,0,0,0]), # Means of the PSD channels
 
            # Deep learning tracking
            'network': None,
@@ -155,15 +152,80 @@ def default_c_p():
 
 
 from dataclasses import dataclass
+# TODO have the max_len be a tunable parameter for configuration.
 
+@dataclass
+class DataChannel:
+    name: str
+    unit: str
+    data: np.array
+    saving_toggled: bool = True
+    max_len: int = 10_000_000
+    index: int = 1
+    full: bool = False
+    max_retrivable: int = 1
+
+    def put_data(self, d):
+        try:
+            if len(d) > self.max_len:
+                return
+        except TypeError:
+            d = [d]
+        if len(self.data) < self.max_len:
+            tmp = np.zeros(self.max_len)
+            tmp[:len(self.data)] = self.data
+            self.index = len(self.data)
+            self.data = tmp
+
+        if self.index+len(d) < self.max_len:
+            self.data[self.index:self.index+len(d)] = d
+            self.index += len(d)
+            if not self.full:
+                self.max_retrivable = self.index
+        else:
+            end_points = self.max_len - self.index
+            self.data[-end_points:] = d[:end_points]
+            self.index = len(d) - end_points
+            self.data[:self.index] = d[end_points:]
+            self.full = True
+            self.max_retrivable = self.max_len
+        
+        if self.index == self.max_len:  # Added this line
+            self.index = 0
+
+    def get_data(self, nbr_points):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        diff = self.index-nbr_points
+        if diff > 0:
+            ret = self.data[self.index-nbr_points:self.index]
+        else:
+            ret = np.concatenate([self.data[self.index+diff:], self.data[:self.index]]).ravel()
+        if not len(ret) == nbr_points:
+            return None
+        return ret
+
+    def get_data_spaced(self, nbr_points, spacing=1):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        diff = self.index-nbr_points
+        final = self.index
+        start = final - (final % spacing) - (nbr_points * spacing)
+        if diff > 0:
+            ret = self.data[start:final:spacing]
+        else:
+            last = (nbr_points * spacing + start) % self.max_len  # Updated calculation for last
+            ret = np.concatenate([self.data[start::spacing], self.data[:last:spacing]]).ravel()
+
+        return ret
+
+"""
 @dataclass
 class DataChannel:
     # New faster implementation of data channel class
     name: str
     unit: str
     data: np.array
-    saving_toggled: bool = False
-    max_len: int = 1000_000
+    saving_toggled: bool = True
+    max_len: int = 1000_000 # 100 million works but is sometimes slow
     index: int = 1
     full: bool = False # True if all elements have been filled
     max_retrivable: int = 1
@@ -207,9 +269,8 @@ class DataChannel:
         if not len(ret) == nbr_points:
             return None
         return ret
-
     def get_data_spaced(self, nbr_points, spacing=1):
-        """
+        
         Function that returns nbr_points data with spacing as specified by spacing.
         If there are not enough data it will return a lesser number of datapoints
         keeping the specified spacing.
@@ -227,7 +288,6 @@ class DataChannel:
         ret : TYPE np array
             DESCRIPTION. Datapoints of channel
 
-        """
         
         nbr_points = min(nbr_points, self.max_retrivable)
         diff = self.index-nbr_points
@@ -242,22 +302,19 @@ class DataChannel:
                                   self.data[final%spacing:last:spacing]]).ravel()
 
         return ret
+"""
+
 
 
 def get_data_dicitonary_new():
-    """
-    ['PSD_pA_x1','bits'],
-    ['PSD_pA_x2','bits'],
-    ['PSD_pA_y1','bits'],
-    ['PSD_pA_y2','bits'],
-    """
-    data = [['Time','(s)'],
+    data = [
+    ['Time','Seconds'], # Time measured by the computer.
     ['particle_trapped','(bool)'],
     ['X-force','(pN)'],
     ['Y-force','(pN)'],
     ['Z-force','(pN)'],
     ['Motor_position','ticks'],
-    ['X-position','(microns)'], # Remove thos that are not used
+    ['X-position','(microns)'], # Remove those that are not used
     ['Y-position','(microns)'],
     ['Z-position','(microns)'],
     ['Temperature', 'Celsius'],
@@ -281,10 +338,23 @@ def get_data_dicitonary_new():
     ['PSD_B_F_sum','bits'],
     ['Photodiode_A','bits'],
     ['Photodiode_B','bits'],
-    ['T_time','Seconds'],
+    ['T_time','microseconds'], # Time measured on the controller
     ['Time_micros_high','microseconds'],
     ['Time_micros_low','microseconds'],
-    ['Time_micros','microseconds'], # Make this the time from the portenta.
+    ['F_A_X','pN'],
+    ['F_A_Y','pN'],
+    ['F_B_X','pN'],
+    ['F_B_Y','pN'],
+    ['F_total_X','pN'],
+    ['F_total_Y','pN'],
+    ['F_total_Z','pN'],
+    ['Photodiode/PSD SUM A','a.u.'],
+    ['Photodiode/PSD SUM B','a.u.'],
+    ['message','string'],
+    ['dac_ax','bits'],
+    ['dac_ay','bits'],
+    ['dac_bx','bits'],
+    ['dac_by','bits'],
     ]
     
     data_dict = {}

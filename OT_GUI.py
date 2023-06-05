@@ -6,6 +6,7 @@ Created on Wed Oct 19 15:50:13 2022
 """
 import sys
 import cv2 # Certain versions of this won't work
+import pickle
 
 from PyQt6.QtWidgets import (
     QMainWindow, QApplication,
@@ -62,7 +63,7 @@ class Worker(QThread):
     '''
     changePixmap = pyqtSignal(QImage)
 
-    def __init__(self, c_p, data, test_mode=True, *args, **kwargs):
+    def __init__(self, c_p, data, test_mode=False, *args, **kwargs):
         super(Worker, self).__init__()
         # Store constructor arguments (re-used for processing)
         self.c_p = c_p
@@ -143,11 +144,11 @@ class Worker(QThread):
 
         while True:
             if self.test_mode:
+                # TODO have this add data channels if they are not already created.
                 self.testDataUpdate()
 
             if self.c_p['image'] is not None:
                 self.image = np.array(self.c_p['image'])
-                #print(self.c_p['fps'])
             else:
                 print("Frame missed!")
             W, H = self.c_p['frame_size']
@@ -197,6 +198,8 @@ class MainWindow(QMainWindow):
         self.c_p = default_c_p()
         self.data_channels = get_data_dicitonary_new()
         self.video_idx = 0
+        self.data_idx = 0 # Index of data save
+        self.saving = False
         # Start camera threads
         self.CameraThread = None
         try:
@@ -376,7 +379,7 @@ class MainWindow(QMainWindow):
         # Add command to save the data
         save_data_action = QAction("Save data", self)
         save_data_action.setStatusTip("Save data to an npy file")
-        save_data_action.triggered.connect(self.dump_data)
+        save_data_action.triggered.connect(self.save_data_to_dict) # Dump data before
         file_menu.addAction(save_data_action)
 
     def dump_data(self):
@@ -385,14 +388,53 @@ class MainWindow(QMainWindow):
             print("No valid name entered")
             return
         path = self.c_p['recording_path'] + '/' + text
-        """
-        save_data = {}
-        for channel_name in self.data_channels:
-            channel = self.data_channels[channel_name]
-            save_data[channel.name] = channel.get_data(channel.max_retrivable)
-        """
         print(f"Saving data to {path}")
         np.save(path,  self.data_channels, allow_pickle=True)
+    
+    def record_data(self):
+        if (self.saving):
+            self.stop_saving()
+            self.toggle_data_record_action.setText("Start recording data")
+        else:
+            self.start_saving()
+            self.toggle_data_record_action.setText("Stop recording data")
+
+    def start_saving(self):
+        # TODO make continous saving possible to avoid unneccesary saving
+        self.start_idx = self.data_channels['PSD_A_P_X'].index
+        self.saving = True
+        print("Saving started")
+
+    def stop_saving(self):
+        self.saving = False
+        print("Saving stopped")
+        self.stop_idx = self.data_channels['PSD_A_P_X'].index
+        sleep(0.1) # Waiting for all channels to reach this point
+        data = {}
+        for channel in self.data_channels:
+            if self.data_channels[channel].saving_toggled:
+                data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
+        filename = self.c_p['recording_path'] + '/' + self.c_p['filename']
+        with open(filename, 'wb') as f:
+                pickle.dump(data, f)
+
+    def save_data_to_dict(self):
+
+        text, ok = QInputDialog.getText(self, 'Filename dialog', 'Set name for data to be saved:')
+        if not ok:
+            print("No valid name entered")
+            return
+        filename = self.c_p['recording_path'] + '/' + text
+        self.c_p['save_idx'] = self.data_channels['PSD_A_P_X'].index
+        sleep(0.1) # Make sure all channels have reached this point
+        data = {}
+        for channel in self.data_channels:
+            if self.data_channels[channel].saving_toggled:
+                data[channel] = self.data_channels[channel].get_data_spaced(1e9)
+        print(f"Saving data to {filename}")
+        #np.save(path, data, allow_pickle=True)
+        with open(filename, 'wb') as f:
+                pickle.dump(data, f)
 
     def action_menu(self):
         action_menu = self.menu.addMenu("Actions")
@@ -402,10 +444,32 @@ class MainWindow(QMainWindow):
         self.save_position_action.triggered.connect(self.save_position)
         action_menu.addAction(self.save_position_action)
 
+        self.zero_force_action = QAction("Zero force", self)
+        self.zero_force_action.setStatusTip("Zero force for current value, resets it if it'z already zeroed")
+        self.zero_force_action.triggered.connect(self.zero_force_PSDs)
+        action_menu.addAction(self.zero_force_action)
+
+        self.reset_force_psds_action = QAction("Reset force PSDs", self)
+        self.reset_force_psds_action.setStatusTip("Reset force PSDs their default values")
+        self.reset_force_psds_action.triggered.connect(self.reset_force_PSDs)
+        action_menu.addAction(self.reset_force_psds_action)
+
         self.saved_positions_submenu = action_menu.addMenu("Saved positions")
 
         for idx in range(len(self.c_p['saved_positions'])):
             self.add_position(idx)
+
+    def zero_force_PSDs(self):
+        self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_X'].get_data_spaced(1000)))
+        self.c_p['PSD_means'][1] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_Y'].get_data_spaced(1000)))
+
+        self.c_p['PSD_means'][2] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_X'].get_data_spaced(1000)))
+        self.c_p['PSD_means'][3] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_Y'].get_data_spaced(1000)))
+        print(self.c_p['PSD_means'])
+        self.c_p['portenta_command_1'] = 1
+
+    def reset_force_PSDs(self):
+        self.c_p['portenta_command_1'] = 2
 
     def add_position(self,idx):
         # Adds position to submenu
@@ -446,11 +510,18 @@ class MainWindow(QMainWindow):
     def goto_position(self,idx):
         if idx>len(self.c_p['saved_positions']):
             return
+        if self.c_p['move_to_location']:
+            # Stop first then start moving, TODO add this as separate button/command
+            self.c_p['move_to_location'] = False
+            self.c_p['motor_x_target_speed'] = 0
+            self.c_p['motor_y_target_speed'] = 0
+            self.c_p['motor_z_target_speed'] = 0
+            return
         # TODO make it use same code for both the options for the motors
         if self.c_p['minitweezers_connected']:
-            self.c_p['minitweezers_target_pos'][0] = self.c_p['saved_positions'][idx][1]
-            self.c_p['minitweezers_target_pos'][1] = self.c_p['saved_positions'][idx][2]
-            self.c_p['minitweezers_target_pos'][2] = self.c_p['saved_positions'][idx][3]
+            self.c_p['minitweezers_target_pos'][0] = int(self.c_p['saved_positions'][idx][1]) # Added +32768
+            self.c_p['minitweezers_target_pos'][1] = int(self.c_p['saved_positions'][idx][2])
+            self.c_p['minitweezers_target_pos'][2] = int(self.c_p['saved_positions'][idx][3])
             self.c_p['move_to_location'] = True
         else:
             self.c_p['stepper_target_position'][0:2] = self.c_p['saved_positions'][idx][1:3]
@@ -466,6 +537,17 @@ class MainWindow(QMainWindow):
         self.open_plot_window.setCheckable(False)
         window_menu.addAction(self.open_plot_window)
 
+        self.open_positions_window = QAction("Position PSDs", self)
+        self.open_positions_window.setToolTip("Open window for position PSDs.\n This is a specially configured version of the live plotter")
+        self.open_positions_window.triggered.connect(self.open_Position_PSD_window)
+        self.open_positions_window.setCheckable(False)
+        window_menu.addAction(self.open_positions_window)
+
+        self.open_force_window = QAction("Force PSDs", self)
+        self.open_force_window.setToolTip("Open window for force PSDs.\n This is a specially configured version of the live plotter")
+        self.open_force_window.triggered.connect(self.open_Force_PSD_window)
+        self.open_force_window.setCheckable(False)
+        window_menu.addAction(self.open_force_window)
         
         self.open_motor_window = QAction("Minitweezers motor window", self)
         self.open_motor_window.setToolTip("Open window for manual motor control.")
@@ -621,9 +703,25 @@ class MainWindow(QMainWindow):
     def show_new_window(self, checked):
         if self.plot_windows is None:
             self.plot_windows = []
-        self.plot_windows.append(PlotWindow(self.c_p, data=self.data_channels, #data=get_data_dicitonary(), # Major change here
-                                          x_keys=['Time','Time'], y_keys=['X-force','Y-position']))
+        self.plot_windows.append(PlotWindow(self.c_p, data=self.data_channels,
+                                          x_keys=['T_time'], y_keys=['PSD_A_P_X']))
 
+        self.plot_windows[-1].show()
+
+    def open_Position_PSD_window(self):
+        if self.plot_windows is None:
+            self.plot_windows = []
+        self.plot_windows.append(PlotWindow(self.c_p, data=self.data_channels,
+                                          x_keys=['PSD_A_P_X','PSD_B_P_X'], y_keys=['PSD_A_P_Y','PSD_B_P_Y'],
+                                          aspect_locked=True, grid_on=True))
+        self.plot_windows[-1].show()
+
+    def open_Force_PSD_window(self):
+        if self.plot_windows is None:
+            self.plot_windows = []
+        self.plot_windows.append(PlotWindow(self.c_p, data=self.data_channels,
+                                          x_keys=['PSD_A_F_X','PSD_B_F_X'], y_keys=['PSD_A_F_Y','PSD_B_F_Y'],
+                                          aspect_locked=True, grid_on=True))
         self.plot_windows[-1].show()
 
     def OpenTemperatureWindow(self):
@@ -647,7 +745,7 @@ class MainWindow(QMainWindow):
         self.dep_learning_window.show()
 
     def OpenLaserPiezoWidget(self):
-        self.laser_piezo_window = LaserPiezoWidget(self.c_p)
+        self.laser_piezo_window = LaserPiezoWidget(self.c_p, self.data_channels)
         self.laser_piezo_window.show()
 
     def closeEvent(self, event):
@@ -719,6 +817,13 @@ def create_camera_toolbar_external(main_window):
     main_window.gain_LineEdit.setText(str(main_window.c_p['image_gain']))
     main_window.gain_LineEdit.textChanged.connect(main_window.set_gain)
     main_window.camera_toolbar.addWidget(main_window.gain_LineEdit)
+
+    main_window.toggle_data_record_action = QAction("Start saving data", main_window)
+    main_window.toggle_data_record_action.setToolTip("Turn ON recodording of data.\n Data will be saved to fileneame set in files windows.")
+    main_window.toggle_data_record_action.setCheckable(True)
+    main_window.toggle_data_record_action.triggered.connect(main_window.record_data)
+    main_window.camera_toolbar.addAction(main_window.toggle_data_record_action)
+
 
 if __name__ == '__main__':
     app = QApplication(sys.argv)
