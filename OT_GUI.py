@@ -26,7 +26,6 @@ from time import sleep
 from functools import partial
 
 
-
 import BaslerCameras
 import ThorlabsCameras
 from CameraControlsNew import CameraThread, VideoWriterThread, CameraClicks
@@ -44,7 +43,9 @@ from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLea
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
 from ReadArduinoPortenta import PortentaComms
+from StepperObjective import ObjectiveStepperController
 import AutoController
+import LaserController
 
 
 class Worker(QThread):
@@ -101,11 +102,14 @@ class Worker(QThread):
             self.data_channels['Z-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Motor_position'].put_data((self.data_channels['Time'].get_data(1) / 10) + np.random.rand())
 
-    def draw_particle_positions(self, centers):
+    def draw_particle_positions(self, centers, pen=None):
         # TODO add function also for crosshair to help with alignment.
         rx = int(250/self.c_p['image_scale'])
         ry = rx
-        self.qp.setPen(self.red_pen)
+        if pen is None:
+            self.qp.setPen(self.red_pen)
+        else:
+            self.qp.setPen(pen)
         for pos in centers:
             x = int(pos[0]/ self.c_p['image_scale']) # Which is which?
             y = int(pos[1]/ self.c_p['image_scale'])
@@ -185,6 +189,8 @@ class Worker(QThread):
             self.draw_central_circle()
             if self.c_p['tracking_on']:
                 self.draw_particle_positions(self.c_p['predicted_particle_positions'])
+            if self.c_p['locate_pippette'] and self.c_p['pipette_location'][0] is not None:
+                self.draw_particle_positions([self.c_p['pipette_location']])
             self.qp.end()
             self.changePixmap.emit(picture)
 
@@ -253,10 +259,20 @@ class MainWindow(QMainWindow):
         except Exception as E:
             print(E)
 
+        self.ArduinoUnoSerial = None
+        try:
+            import serial
+            port = self.c_p['objective_stepper_port']
+            self.ArduinoUnoSerial = serial.Serial(port, 9600)
+            print("Connected to Arduino Uno.")
+        except Exception as E:
+            print(E)
+            print("Could not connect to Arduino Uno for objective stepper control!")
+
         self.VideoWriterThread = VideoWriterThread(2, 'video thread', self.c_p)
         self.VideoWriterThread.start()
 
-        self.DeepThread = DeepLearningAnalyserLDS(self.c_p)
+        self.DeepThread = DeepLearningAnalyserLDS(self.c_p, self.data_channels)
         self.DeepThread.start()
 
         self.plot_windows = None
@@ -301,7 +317,7 @@ class MainWindow(QMainWindow):
         self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels))
         self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors
         self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
-        self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
+        #self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['click_tools'].append(AutoController.SelectLaserPosition(self.c_p))
 
         self.c_p['mouse_params'][5] = 0
@@ -555,30 +571,37 @@ class MainWindow(QMainWindow):
         self.open_motor_window.setCheckable(False)
         window_menu.addAction(self.open_motor_window)
 
+
+        self.open_stepper_window = QAction("Objective motor window", self)
+        self.open_stepper_window.setToolTip("Open window for manual motor control, objective stepper motor.")
+        self.open_stepper_window.triggered.connect(self.open_stepper_objective)
+        self.open_stepper_window.setCheckable(False)
+        window_menu.addAction(self.open_stepper_window)
+
+        """
         self.open_thorlabsM_window = QAction("Thorlabs motor window", self)
         self.open_thorlabsM_window.setToolTip("Open window for manual motor control, thorlabs motors.")
         self.open_thorlabsM_window.triggered.connect(self.open_thorlabs_motor_control_window)
         self.open_thorlabsM_window.setCheckable(False)
         window_menu.addAction(self.open_thorlabsM_window)
 
-        self.open_deep_window = QAction("DL window", self)
-        self.open_deep_window.setToolTip("Open window for deep learning control.")
-        self.open_deep_window.triggered.connect(self.OpenDeepLearningWindow)
-        self.open_deep_window.setCheckable(False)
-        window_menu.addAction(self.open_deep_window)
-
-        self.open_laser_piezo_window_action = QAction("Laser piezos window", self)
-        self.open_laser_piezo_window_action.setToolTip("Open window controlling piezos of lasers.")
-        self.open_laser_piezo_window_action.triggered.connect(self.OpenLaserPiezoWidget)
-        self.open_laser_piezo_window_action.setCheckable(False)
-        window_menu.addAction(self.open_laser_piezo_window_action)
-
         self.open_plankton_window = QAction("Plankton viewer", self)
         self.open_plankton_window.setToolTip("Open plankton viewer window.")
         self.open_plankton_window.triggered.connect(self.openPlanktonViwer)
         self.open_plankton_window.setCheckable(False)
         window_menu.addAction(self.open_plankton_window)
-
+        """
+        self.open_deep_window = QAction("DL window", self)
+        self.open_deep_window.setToolTip("Open window for deep learning control.")
+        self.open_deep_window.triggered.connect(self.OpenDeepLearningWindow)
+        self.open_deep_window.setCheckable(False)
+        window_menu.addAction(self.open_deep_window)
+        
+        self.open_laser_piezo_window_action = QAction("Laser piezos window", self)
+        self.open_laser_piezo_window_action.setToolTip("Open window controlling piezos of lasers.")
+        self.open_laser_piezo_window_action.triggered.connect(self.OpenLaserPiezoWidget)
+        self.open_laser_piezo_window_action.setCheckable(False)
+        window_menu.addAction(self.open_laser_piezo_window_action)
         
         self.open_channel_viewer = QAction("Data channels", self)
         self.open_channel_viewer.setToolTip("Opens a separate window in which the current values \n of the data channels is displayed.")
@@ -592,8 +615,21 @@ class MainWindow(QMainWindow):
         self.auto_controller_action.setCheckable(False)
         window_menu.addAction(self.auto_controller_action)
 
+        self.open_laser_window_action = QAction("Laser controller", self)
+        self.open_laser_window_action.setToolTip("Opens a window for interfacing the laser controller.")
+        self.open_laser_window_action.triggered.connect(self.open_laser_window)
+        self.open_laser_window_action.setCheckable(False)
+        window_menu.addAction(self.open_laser_window_action)
+
+
+
     def openPlanktonViwer(self):
         self.planktonView = PlanktonViewer(self.c_p)
+
+    def open_laser_window(self):
+        # TODO make it impossible to open more than one of these windows
+        self.laser_window = LaserController.LaserControllerWidget(self.c_p)
+        self.laser_window.show()
 
     def open_channels_winoow(self):
         self.channelView = CurrentValueWindow(self.c_p, self.data_channels)
@@ -603,8 +639,12 @@ class MainWindow(QMainWindow):
         self.c_p['video_format'] = video_format
 
     def open_motor_control_window(self):
-        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p) #MotorControlWidget.ThorlabsMotorWindow(self.c_p) #
+        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p)
         self.MCW.show()
+
+    def open_stepper_objective(self):
+        self.obective_controller = ObjectiveStepperController(self.c_p, self.ArduinoUnoSerial)
+        self.obective_controller.show()
 
     def open_thorlabs_motor_control_window(self):
         self.MCW_T = MotorControlWidget.ThorlabsMotorWindow(self.c_p)
@@ -733,7 +773,7 @@ class MainWindow(QMainWindow):
         self.PI_window.show()
 
     def openAutoControllerWidnow(self):
-        self.auto_controller_window = AutoController.AutoControlWidget(self.c_p)
+        self.auto_controller_window = AutoController.AutoControlWidget(self.c_p, self.data_channels)
         self.auto_controller_window.show()
 
     def DataWindow(self):
@@ -753,6 +793,7 @@ class MainWindow(QMainWindow):
         if self.plot_windows is not None:
             for w in self.plot_windows:
                 w.close()
+        self.__del__
 
 
     def __del__(self):
@@ -768,6 +809,9 @@ class MainWindow(QMainWindow):
             self.PICReaderT.join()
         if self.PICWriterT is not None:
             self.PICWriterT.join()
+
+        if self.ArduinoUnoSerial is not None and self.ArduinoUnoSerial.is_open:
+            self.ArduinoUnoSerial.close()
 
         self.DeepThread.join()
 

@@ -46,7 +46,7 @@ def default_c_p():
            'bitrate': '30000000', # Bitrate of video to be saved
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
            'image_scale': 1,
-           'microns_per_pix': 30/5000 * 1e-3, # 5000 pixels per 30 micron roughly, changed to have more movements
+           'microns_per_pix': 1/18.28, #30/5000 * 1e-3, # 5000 pixels per 30 micron roughly(downstairs), changed to have more movements, System dependent!
 
            # Temperature c_p
            'temperature_output_on':False,
@@ -57,7 +57,7 @@ def default_c_p():
            
            # PIC reader c_p
            'pic_channels':[# Channels to read from the controller
-                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum', # A_P should be on top, switched momentarily to circumvent the PSD_F_A sum issue
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
                             'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
@@ -69,11 +69,13 @@ def default_c_p():
                             'dac_ax','dac_ay','dac_bx','dac_by',
                             #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
                            ],
-           'offset_channels':[ # Channels which are sent with an offset due to being either positive or negative
-                            'PSD_A_P_X', 'PSD_A_P_Y',
-                            'PSD_A_F_X', 'PSD_A_F_Y', 
-                            'PSD_B_P_X', 'PSD_B_P_Y', 
-                            'PSD_B_F_X', 'PSD_B_F_Y', 
+           'offset_channels':[ #TODO change so that the offset is default setting.
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+                            'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
+                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
+                            'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
+                            'Photodiode_A','Photodiode_B',
+
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
             'save_idx': 0, # Index of the saved data     
            # Piezo outputs
@@ -97,16 +99,32 @@ def default_c_p():
            'epochs': 30,
            'epochs_trained': 0,
            'predicted_particle_positions': np.array([]),
+           'particle_prediction_made': False,
+
 
             # Autocontroller parameters
             'centering_on': False,
             'trap_particle': False,
             'search_and_trap': False,
-            'laser_position': [1520,1830], # Default 
+            'laser_position': [2660, 1502.3255814], #[1520,1830], # Default 
+            'locate_pippette': False, # TODO fix speling error
+            'pipette_location': [0,0], # Location of the pipette in the image
+            'pipette_location_chamber': [0,0,0], # Location of the pipette in the chamber
+            'pipette_located': False,
+            'center_pipette': False,
 
             # Minitweezers controller parameters
             'COM_port': 'COM9',
             'minitweezers_connected': False,
+            'blue_led': 0, # Wheter the blue led is on or off, 0 for on and 1 for off
+            'objective_stepper_port': 'COM2',
+            # Laser parameters
+            'laser_A_port':'COM7',
+            'laser_B_port':'COM6',
+            'laser_A_current': 370, # Current in mA
+            'laser_B_current': 330, # Current in mA
+            'laser_A_on': False,
+            'laser_B_on': False,
 
            # Minitweezers motors
            'motor_x_target_speed': 0,
@@ -114,8 +132,10 @@ def default_c_p():
            'motor_z_target_speed': 0,
            'minitweezers_target_pos': [32678,32678,32678],
            'minitweezers_target_speed': [0,0,0],
-           'motor_travel_speed': 5_000,
+           'motor_travel_speed': 2_000, # 5000 was somewhat high 
            'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
+           'ticks_per_micron': 24.45, # How many ticks per pixel
+           'ticks_per_pixel': 0.3, #1.337, # How many pixels per micron
 
            # Thorlabs motors
            'disconnect_motor':[False,False,False],
@@ -160,7 +180,7 @@ class DataChannel:
     unit: str
     data: np.array
     saving_toggled: bool = True
-    max_len: int = 10_000_000
+    max_len: int = 10_000_000 # 10_000_000 default
     index: int = 1
     full: bool = False
     max_retrivable: int = 1
@@ -196,14 +216,27 @@ class DataChannel:
     def get_data(self, nbr_points):
         nbr_points = min(nbr_points, self.max_retrivable)
         diff = self.index-nbr_points
+        if diff >= 0:
+            ret = self.data[self.index-nbr_points:self.index]
+        else:
+            ret = np.concatenate([self.data[diff:], self.data[:self.index]]).ravel()
+        if not len(ret) == nbr_points:
+            print("Error lengths of data is", len(ret), nbr_points, len(self.data))
+            return None
+        return ret
+    """
+    def get_data(self, nbr_points):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        diff = self.index-nbr_points
         if diff > 0:
             ret = self.data[self.index-nbr_points:self.index]
         else:
             ret = np.concatenate([self.data[self.index+diff:], self.data[:self.index]]).ravel()
         if not len(ret) == nbr_points:
+            print("Error lengths of data is", len(ret), nbr_points, len(self.data))
             return None
         return ret
-
+    """    
     def get_data_spaced(self, nbr_points, spacing=1):
         nbr_points = min(nbr_points, self.max_retrivable)
         diff = self.index-nbr_points
@@ -310,13 +343,6 @@ def get_data_dicitonary_new():
     data = [
     ['Time','Seconds'], # Time measured by the computer.
     ['particle_trapped','(bool)'],
-    ['X-force','(pN)'],
-    ['Y-force','(pN)'],
-    ['Z-force','(pN)'],
-    ['Motor_position','ticks'],
-    ['X-position','(microns)'], # Remove those that are not used
-    ['Y-position','(microns)'],
-    ['Z-position','(microns)'],
     ['Temperature', 'Celsius'],
     ['Motor_x_pos', 'ticks'],
     ['Motor_y_pos','ticks'],

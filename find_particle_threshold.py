@@ -1,4 +1,5 @@
 import cv2
+import scipy
 import numpy as np
 from matplotlib import pyplot as plt
 import scipy.ndimage as ndi
@@ -122,8 +123,7 @@ def find_particle_centers(image,threshold=120, particle_size_threshold=200,
 
 
 def find_pipette_top(image,threshold=120, particle_size_threshold=10_000,
-                        particle_upper_size_threshold=1000_000,
-                        bright_particle=True, fill_holes=False, check_circular=False):
+                        particle_upper_size_threshold=1000_000, fill_holes=False, ratio=2):
     """
     Function which locates pipette top  using thresholding.
     Parameters :
@@ -154,16 +154,16 @@ def find_pipette_top(image,threshold=120, particle_size_threshold=10_000,
             targ = separate_particles_image==group
             contours = [np.argwhere(targ).astype(np.int32)]
             x, y, w, h = cv2.boundingRect(contours[0])
-            if w/h>2.5:
-            # TODO check aspect ratio to make highten the likelihood that we are in the vicinity of the pippette
+
+            # Checking aspect ratio to make highten the likelihood that we are in the vicinity of the pippette
+            if w / h > ratio:
                 y_t = np.argmax(targ[x,:]) # Want top pixel.
                 return x, y_t, targ
     return None, None, None
 
 
-def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=200,
-                     particle_upper_size_threshold=5000,
-                     bright_particle=True, fill_holes=False, check_circular=False):
+def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=10_000,
+                     particle_upper_size_threshold=1000_000, fill_holes=False, ratio=2):
     """
     Function which locates pipette top using thresholding. Also uses GPU and specifically cupy.
     Significantly faster than the CPU version if there is a GPU available.
@@ -200,8 +200,8 @@ def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=200,
             targ = separate_particles_image==group
             contours = [np.argwhere(targ).astype(np.int32)]
             x, y, w, h = cv2.boundingRect(contours[0])
-            if w/h>2.5:
-            # TODO check aspect ratio to make highten the likelihood that we are in the vicinity of the pippette
+            # Checking ratio to make highten the likelihood that we are in the vicinity of the pippette
+            if w / h > ratio:
                 y_t = np.argmax(targ[x,:]) # Want top pixel.
                 return x, y_t, cp.asnumpy(thresholded_image)#targ
     return None, None, None

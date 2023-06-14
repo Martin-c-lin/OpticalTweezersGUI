@@ -9,6 +9,7 @@ from threading import Thread
 import numpy as np
 import serial
 from time import sleep, time
+import timeit
 
 class PortentaComms(Thread):
 
@@ -142,7 +143,7 @@ class PortentaComms(Thread):
         self.outdata[32] = self.c_p['PSD_means'][3] >> 8
         self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
 
-        #self.outdata[30:32] = [125, 125]
+        self.outdata[34] = self.c_p['blue_led']
 
         try:
             self.serial_channel.write(self.outdata)
@@ -200,6 +201,21 @@ class PortentaComms(Thread):
         self.calc_quote('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum')
         self.calc_quote('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum')
 
+
+    def calc_quote_fast(self, quote, channel1, channel2, chunk_length):
+        D1 = self.data_channels[channel1].get_data(chunk_length)
+        D2 = np.copy(self.data_channels[channel2].get_data(chunk_length).astype(float))
+        D2[D2==0] = np.inf
+        self.data_channels[quote].put_data(D1/D2)
+        
+    def calculate_quotes_fast(self, chunk_length):
+        self.calc_quote_fast('F_A_X','PSD_A_F_X','PSD_A_F_sum',chunk_length)
+        self.calc_quote_fast('F_A_Y','PSD_A_F_Y','PSD_A_F_sum',chunk_length)
+        self.calc_quote_fast('F_B_X','PSD_B_F_X','PSD_B_F_sum',chunk_length)
+        self.calc_quote_fast('F_B_Y','PSD_B_F_Y','PSD_B_F_sum',chunk_length)
+        self.calc_quote_fast('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum',chunk_length)
+        self.calc_quote_fast('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum',chunk_length)
+
     def get_data_new(self):
         if self.serial_channel is None:
             return
@@ -212,9 +228,10 @@ class PortentaComms(Thread):
             self.serial_channel = None
             self.c_p['minitweezers_connected'] = False
             return
-
+        start = timeit.default_timer()
         # Process the received data in chunks of 64 bytes
         for i in range(0, len(raw_data), 64):
+            
             chunk = raw_data[i:i+64]
 
             # Check if the correct amount of bytes are received
@@ -244,7 +261,62 @@ class PortentaComms(Thread):
                 self.c_p['portenta_command_1'] = 0
             #Addding computers own time
             self.data_channels['Time'].put_data([time() - self.start_time])
-            self.calculate_quotes()
+            #self.calculate_quotes()
+        print(f"Time for calculation {(timeit.default_timer()-start)*1e6} microseconds, {len(raw_data)/64}.")
+
+    def combine_bytes(self, high_byte, low_byte):
+        return (high_byte << 8) | low_byte
+    
+    def get_data_fast(self):
+        if self.serial_channel is None:
+            return
+
+        try:
+            bytes_to_read = self.serial_channel.in_waiting
+            raw_data = self.serial_channel.read(bytes_to_read)
+        except serial.serialutil.SerialException as e:
+            print(f"Serial exception: {e}")
+            self.serial_channel = None
+            self.c_p['minitweezers_connected'] = False
+            return
+        if len(raw_data) < 64:
+            return
+        if raw_data[0] != 123 or raw_data[1] != 123:
+                print('Wrong start bytes')
+                return
+        # start = timeit.default_timer()
+        
+        # Process the received data using indexing
+        nbr_channels = len(self.c_p['pic_channels'])
+        nbr_chunks = int(len(raw_data)/64)
+        ch_indices = np.array([2 * idx + 2 for idx in range(nbr_channels)])
+        data_indices = np.array([ch_indices+64*i for i in range(nbr_chunks)]).flatten()
+        raw_data = np.frombuffer(raw_data, dtype=np.uint8)
+        high_bytes = raw_data[data_indices].astype(np.uint16)
+        low_bytes = raw_data[data_indices+1].astype(np.uint16) # np.uint16
+        numbers = (high_bytes << 8) | low_bytes
+        pic_indices = np.linspace(0,nbr_channels * (nbr_chunks-1) ,nbr_chunks, dtype=int)
+
+        for idx, channel in enumerate(self.c_p['pic_channels']):
+            ch_data = numbers[pic_indices + idx]
+            if channel in self.c_p['offset_channels']:
+                self.data_channels[channel].put_data(ch_data.astype(np.int)-32768)
+            elif channel == 'Time_micros_high':
+                T = ch_data.astype(np.int32) * 2**16
+            elif channel == 'Time_micros_low':
+                T += ch_data
+                self.data_channels['T_time'].put_data(T)
+            elif channel == 'T_time':
+                pass
+            else:
+                self.data_channels[channel].put_data(ch_data)
+            #self.data_channels[channel].put_data(ch_data)
+        if self.data_channels['message'] != 0:
+                self.c_p['portenta_command_1'] = 0 # TODO check that this matches the previous code
+            #Addding computers own time
+        # self.data_channels['Time'].put_data([time() - self.start_time])# TODO fix this
+        self.calculate_quotes_fast(nbr_chunks) # TODO fix this
+        # print(f"Time for calculation {(timeit.default_timer()-start)*1e6} microseconds, {nbr_chunks}.")
 
 
     def connect_port(self):
@@ -256,7 +328,13 @@ class PortentaComms(Thread):
         dist_x = self.c_p['minitweezers_target_pos'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
         dist_y = self.c_p['minitweezers_target_pos'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
         dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
-        # print(dist_x, dist_y, dist_z)
+
+        # Adjust speed depending on how far we are going
+        if dist_x**2 + dist_y**2 >10_000:
+            self.c_p['motor_travel_speed'] = 5000
+        else:
+            self.c_p['motor_travel_speed'] = 500
+
         # Changed the signs of this function
         if dist_x**2>100:
             self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'] if dist_x > 0 else self.c_p['motor_travel_speed']
@@ -289,8 +367,10 @@ class PortentaComms(Thread):
             # Idea only send data when there is actually something to send, don't send while
             # recording an experiment to get sampling more consistent.
             self.send_data_fast() # Have also an older well tested but probably slower version.
-            self.get_data_new()
-            sleep(1e-5)
+            # self.get_data_new() # Works reliably but struggles when the sample rate exceeds like 4khz
+            self.get_data_fast()
+            sleep(2e-3) # Increased here from 1e-5
         if self.serial_channel is not None:
             self.serial_channel.close()
+            print('Serial connection to minitweezers closed')
             

@@ -8,7 +8,7 @@ Created on Wed Jan 18 10:57:06 2023
 
 from PyQt6.QtWidgets import (
     QMainWindow, QCheckBox, QComboBox, QListWidget, QLineEdit,
-    QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,
+    QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,QCheckBox,
     QPushButton, QVBoxLayout, QWidget, QLabel
 )
 
@@ -16,8 +16,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtGui import QAction, QIntValidator
 
 import numpy as np
-from functools import partial
-from threading import Thread
+# from functools import partial
+# from threading import Thread
 from ThorlabsMotor import MotorThreadV2, PiezoThread
 from CustomMouseTools import MouseInterface
 from time import time, sleep
@@ -25,8 +25,8 @@ from time import time, sleep
 # Maybe have this as a QThread?
 class MotorControllerWindow(QWidget):
     """
-    This "window" is a QWidget. If it has no parent, it
-    will appear as a free-floating window as we want.
+    Widget for controlling the motors of the minitweezers setup. Allows for changing the 
+    speed of the motors and moving them in the x and y direction.
     """
     def __init__(self, c_p):
         super().__init__()
@@ -86,8 +86,32 @@ class MotorControllerWindow(QWidget):
         self.objective_backward_button.setCheckable(False)
         layout.addWidget(self.objective_backward_button)
 
+        self.led_button = QCheckBox()
+        self.led_button.stateChanged.connect(self.toggle_led)
+        self.led_button.setChecked((self.c_p['blue_led']==0))
+
+        self.led_button.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 30px;
+                height: 30px;
+            }
+            """)
+        led_label = QLabel("LED ON/OFF")
+        layout.addWidget(led_label) 
+        layout.addWidget(self.led_button)
         self.setLayout(layout)
         
+
+    def toggle_led(self, state):
+        """
+        Toggle the saving_toggled property of the DataChannel when the checkbox is toggled.
+        """
+        self.c_p['blue_led'] = 0 if bool(state) else 1
+        if self.c_p['blue_led'] == 0:
+            print("LED on")
+        else:
+            print("LED off")
+
     def set_motor_speed(self, speed):
         # Maybe have this toggleable
         if np.abs(int(speed)) < 32760:
@@ -427,6 +451,7 @@ class MinitweezersMouseMove(MouseInterface):
 
             dx = (self.c_p['mouse_params'][3] - self.x_prev)#/dt
             dy = (self.c_p['mouse_params'][4] - self.y_prev)#/dt
+            #print("Speeds",dx,dy)
             x_speed = self.check_speed(dx * self.speed_factor)
             y_speed = self.check_speed(dy * self.speed_factor)
             self.c_p['motor_x_target_speed'] = int(x_speed)

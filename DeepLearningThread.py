@@ -9,8 +9,8 @@ import torch
 import cv2
 import sys
 # Todo remove deeptrack
-import deeptrack as dt
-import tensorflow as tf
+# import deeptrack as dt
+# import tensorflow as tf
 import numpy as np
 import matplotlib.pyplot as plt
 
@@ -24,6 +24,7 @@ from PyQt6.QtWidgets import (
     QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 )
 
+
 sys.path.append('C:/Users/Martin/OneDrive/PhD/AutOT/') # TODO move this to same folder as this file
 
 import find_particle_threshold as fpt
@@ -34,7 +35,7 @@ from CustomMouseTools import MouseInterface
 # its own network alternatively we should have the thread capable of having 
 # multiple networks.
 
-def torch_unet_prediction(model, image, device, fac=4, threshold=150):
+def torch_unet_prediction(model, image, device, fac=1.4, threshold=260):
 
     new_size = [int(np.shape(image)[1]/fac),int(np.shape(image)[0]/fac)]
     rescaled_image = cv2.resize(image, dsize=new_size, interpolation=cv2.INTER_CUBIC)
@@ -44,7 +45,14 @@ def torch_unet_prediction(model, image, device, fac=4, threshold=150):
         return np.array([])
     # TODO do more of this in pytorch which is faster since it works on GPU
     rescaled_image = np.float32(np.reshape(rescaled_image,[1,1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1]]))
-    predicted_image = model(torch.tensor(rescaled_image).to(device))
+    try:
+        torch.cuda.empty_cache() # TODO only do this if device is GPU
+        predicted_image = model(torch.tensor(rescaled_image).to(device))
+    except Exception as E:
+        print("GPU out of memory, using CPU instead")
+        print(E)
+        model.to("cpu")
+        predicted_image = model(torch.tensor(rescaled_image).to("cpu"))
     resulting_image = predicted_image.detach().cpu().numpy()
     x,y,_ = fpt.find_particle_centers(np.array(resulting_image[0,0,:,:]), threshold)
     ret = []
@@ -68,7 +76,7 @@ class DeepLearningAnalyserLDS(Thread):
     """
     Thread which analyses the real-time image for detecting particles
     """
-    def __init__(self, c_p, particle_type=0, model=None):
+    def __init__(self, c_p, data_channels, particle_type=0, model=None):
         """
         
 
@@ -87,6 +95,7 @@ class DeepLearningAnalyserLDS(Thread):
         # TODO replace model with network
         Thread.__init__(self)
         self.c_p = c_p
+        self.data_channels = data_channels
         self.c_p['model'] = model
         self.training_target_size = (64, 64)
         self.particle_type = particle_type # Type of particle to be tracked/analyzed
@@ -142,6 +151,36 @@ class DeepLearningAnalyserLDS(Thread):
         x,y,_ = fpt.find_particle_centers(predicted_image[0,:,:,0],self.c_p['cutoff'])
         return np.array(x)*fac, np.array(y)*fac
 
+    def weak_gpu_torch_unet_prediction(self):
+        # TODO cut to area of interest here
+        width = self.c_p['image'].shape[0]
+        height = self.c_p['image'].shape[1]
+        max_w = 1200
+        if width > max_w:
+            x0 = int(width/2-max_w/2)
+            x1 = int(width/2+max_w/2)
+        else:
+            x0=0
+            x1 = width
+        if height > max_w:
+            y0 = int(height/2-max_w/2)
+            y1 = int(height/2+max_w/2)
+        else:
+            y0=0
+            y1 = height
+        start_pos_x = self.data_channels['Motor_x_pos'].get_data(1)[0]
+        start_pos_y = self.data_channels['Motor_y_pos'].get_data(1)[0]
+        prediction = torch_unet_prediction(self.c_p['model'], self.c_p['image'][x0:x1,y0:y1], self.c_p['device'] ) 
+        if len(prediction) == 0:
+            return prediction
+        dx = (start_pos_x - self.data_channels['Motor_x_pos'].get_data(1)[0])/self.c_p['ticks_per_pixel']
+        dy = (start_pos_y - self.data_channels['Motor_y_pos'].get_data(1)[0])/self.c_p['ticks_per_pixel']
+        prediction[:,1] += x0 #- dy # SIgne etc wrong maybe?
+        prediction[:,0] += y0 #+ dx
+        #print(prediction)
+        self.c_p['particle_prediction_made'] = True
+        return prediction
+
     def make_prediction(self):
         """
         Predicts particle positions in the center square of the current image
@@ -159,7 +198,8 @@ class DeepLearningAnalyserLDS(Thread):
         if self.c_p['network'] == "DeepTrack Unet":
             return self.make_unet_prediction()
         if self.c_p['network'] == "Pytorch Unet":
-            return torch_unet_prediction(self.c_p['model'], self.c_p['image'], self.c_p['device'] ) 
+            return self.weak_gpu_torch_unet_prediction()  # When running on weak laptop GPU
+            # return torch_unet_prediction(self.c_p['model'], self.c_p['image'], self.c_p['device'] ) 
 
         # Prepare the image for prediction
         data = np.array(self.c_p['image'])
@@ -179,6 +219,23 @@ class DeepLearningAnalyserLDS(Thread):
             # Get the error "h = 0 is ambiguous, use local_maxima() instead?"
             return np.array([[300,300]])
         return np.array(positions[0]) / self.c_p['prescale_factor']# / self.c_p['image_scale'] Using pixels of camera as default unit
+    
+    def locate_pipette(self):
+        # TODO check if cupy is installed. If not, use numpy
+        start_pos_x = self.data_channels['Motor_x_pos'].get_data(1)[0]
+        start_pos_y = self.data_channels['Motor_y_pos'].get_data(1)[0]
+        self.c_p['pipette_location'][1], self.c_p['pipette_location'][0], _ = fpt.find_pipette_top_GPU(self.c_p['image']) #fpt.find_pipette_top_GPU(self.c_p['image'])
+        if self.c_p['pipette_location'][0] is None:
+            return
+
+        dx = start_pos_x - self.data_channels['Motor_x_pos'].get_data(1)[0]
+        dy = start_pos_y - self.data_channels['Motor_y_pos'].get_data(1)[0]
+        self.c_p['pipette_location'][1] -= dy/self.c_p['ticks_per_pixel']
+        self.c_p['pipette_location'][0] += dx/self.c_p['ticks_per_pixel']
+
+        print("Pipette at", self.c_p['pipette_location'][1], self.c_p['pipette_location'][0])
+        
+        self.c_p['pipette_located'] = True # TODO add location in motor steps as well.
 
     def run(self):
         
@@ -188,6 +245,8 @@ class DeepLearningAnalyserLDS(Thread):
                 self.c_p['predicted_particle_positions'] = self.make_prediction()
             else:
                 sleep(0.1)
+            if self.c_p['locate_pippette']:
+                self.locate_pipette()
             if self.c_p['train_new_model']:
                 print("training new model")
                 self.train_new_model(self.c_p['training_image'])
@@ -214,12 +273,12 @@ class DeepLearningControlWidget(QWidget):
         self.training_image_button.pressed.connect(self.show_training_image)
         self.training_image_button.setCheckable(False)
         layout.addWidget(self.training_image_button)
-
+        """
         self.train_network_button = QPushButton('Train network')
         self.train_network_button.pressed.connect(self.train_network)
         self.train_network_button.setCheckable(False)
         layout.addWidget(self.train_network_button)
-
+        
         self.load_network_button = QPushButton('Load network')
         self.load_network_button.pressed.connect(self.load_network)
         self.load_network_button.setCheckable(False)
@@ -229,7 +288,7 @@ class DeepLearningControlWidget(QWidget):
         self.load_unet_button.pressed.connect(self.load_deeptrack_unet)
         self.load_unet_button.setCheckable(False)
         layout.addWidget(self.load_unet_button)
-
+        """
         self.load_pytorch_unet_button = QPushButton('Load pytorch U-Net')
         self.load_pytorch_unet_button.pressed.connect(self.load_pytorch_unet)
         self.load_pytorch_unet_button.setCheckable(False)
@@ -240,7 +299,16 @@ class DeepLearningControlWidget(QWidget):
         self.save_network_button.setCheckable(False)
         layout.addWidget(self.save_network_button)
 
+        self.locate_pipette_button = QPushButton('Locate pipette')
+        self.locate_pipette_button.pressed.connect(self.locate_pipette)
+        self.locate_pipette_button.setCheckable(True)
+        self.locate_pipette_button.setChecked(self.c_p['locate_pippette'])
+        self.locate_pipette_button.setToolTip("Locate the pipette tip in the image")
+        layout.addWidget(self.locate_pipette_button)
+
         self.setLayout(layout)
+
+    # TODO add thereshold slider for the network
 
     def save_network(self):
         # Not finished
@@ -269,6 +337,9 @@ class DeepLearningControlWidget(QWidget):
         print(f"Opening network {network_name[0]}")
         self.c_p['model'], self.c_p['device']  = load_torch_unet(network_name[0])
         self.c_p['network'] = "Pytorch Unet"
+
+    def locate_pipette(self):
+        self.c_p['locate_pippette'] = not self.c_p['locate_pippette']
 
 
     def toggle_tracking(self):
