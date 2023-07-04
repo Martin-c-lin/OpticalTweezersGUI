@@ -451,7 +451,6 @@ class MinitweezersMouseMove(MouseInterface):
 
             dx = (self.c_p['mouse_params'][3] - self.x_prev)#/dt
             dy = (self.c_p['mouse_params'][4] - self.y_prev)#/dt
-            #print("Speeds",dx,dy)
             x_speed = self.check_speed(dx * self.speed_factor)
             y_speed = self.check_speed(dy * self.speed_factor)
             self.c_p['motor_x_target_speed'] = int(x_speed)

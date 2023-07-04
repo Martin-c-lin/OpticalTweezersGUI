@@ -24,7 +24,6 @@ class LaserControllerWidget(QWidget):
     def __init__(self, c_p):
         super().__init__()
         self.c_p = c_p
-        #layout = QVBoxLayout()
         
         self.current_A_edit_val = self.c_p['laser_A_current']
         self.current_B_edit_val = self.c_p['laser_B_current']
@@ -35,9 +34,6 @@ class LaserControllerWidget(QWidget):
         self.init_laser_A()
         self.laser_A_on = False
         self.laser_B_on = False
-        #self.label = QLabel("Laser controller")
-        #layout.addWidget(self.label)
-        #self.addLayout(layout)
         self.initUI()
 
     def init_laser_A(self):
@@ -107,11 +103,10 @@ class LaserControllerWidget(QWidget):
         self.currentB_layout.addWidget(self.setCurrentButton)
         self.laserB_layout.addRow("Set current", self.currentB_layout)
 
-
-        #self.currentB_slider = QSlider(Qt.Orientation.Horizontal, self)
-        #current_laserB = partial(self.set_laser_currrent, 'B')
-        #self.currentB_slider.valueChanged.connect(current_laserB)
-        #self.laserB_layout.addRow("Current", self.currentB_slider)
+        self.set_both_currents_button = QPushButton("Set currents", self)
+        self.set_both_currents_button.clicked.connect(self.set_both_currents)
+        self.laserB_layout.addRow("Set both currents", self.set_both_currents_button)
+       
         layout.addLayout(self.laserB_layout)
 
         self.setLayout(layout)
@@ -152,11 +147,16 @@ class LaserControllerWidget(QWidget):
                 )
             except Exception as E:
                 print(E)
+
     def tempCurrentA(self, current):
         self.current_A_edit_val = int(current)
     
     def tempCurrentB(self, current):
         self.current_B_edit_val = int(current)
+
+    def set_both_currents(self):
+        self.set_laser_A_current()
+        self.set_laser_B_current()
 
     def set_laser_A_current(self):
         current = int(self.current_A_edit_val) # TODO get the value directly from the edit box 

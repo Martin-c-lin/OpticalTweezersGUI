@@ -112,15 +112,19 @@ def default_c_p():
             'pipette_location_chamber': [0,0,0], # Location of the pipette in the chamber
             'pipette_located': False,
             'center_pipette': False,
+            'move_avoiding_particles': False,
+            'AD_tube_position': [0,0,0], # Position of the AD tube in the chamber, motor coordinates
 
             # Minitweezers controller parameters
-            'COM_port': 'COM9',
+            'COM_port': 'COM9',#'COM9',
             'minitweezers_connected': False,
             'blue_led': 0, # Wheter the blue led is on or off, 0 for on and 1 for off
             'objective_stepper_port': 'COM2',
+            'PSD_bits_per_micron_sum': 0.0703, # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns 
+
             # Laser parameters
-            'laser_A_port':'COM7',
-            'laser_B_port':'COM6',
+            'laser_A_port':'COM10',
+            'laser_B_port':'COM8',
             'laser_A_current': 370, # Current in mA
             'laser_B_current': 330, # Current in mA
             'laser_A_on': False,
@@ -132,10 +136,12 @@ def default_c_p():
            'motor_z_target_speed': 0,
            'minitweezers_target_pos': [32678,32678,32678],
            'minitweezers_target_speed': [0,0,0],
-           'motor_travel_speed': 2_000, # 5000 was somewhat high 
+           'motor_travel_speed': [2_000,2_000], # 5000 was somewhat high Speed of move to location.
            'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
-           'ticks_per_micron': 24.45, # How many ticks per pixel
+           'ticks_per_micron': 24.45, # How many ticks per micron
            'ticks_per_pixel': 0.3, #1.337, # How many pixels per micron
+            # TODO add a fix to when the controller is disconnected.
+           
 
            # Thorlabs motors
            'disconnect_motor':[False,False,False],

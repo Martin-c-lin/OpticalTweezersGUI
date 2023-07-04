@@ -307,7 +307,6 @@ class PlotWindow(QMainWindow):
 
         self.add_plot_action = QAction("Add plot", self)
         self.add_plot_action.setToolTip("Adds another plot to the window")
-        #add_plot_shortcut = QShortcut(QKeySequence("Ctrl+P"), self)
         add_p = partial(self.add_plot, 'T_time', 'PSD_A_F_X')
         self.add_plot_action.triggered.connect(add_p)# self.add_plot)
         self.add_plot_action.setCheckable(False)

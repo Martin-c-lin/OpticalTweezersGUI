@@ -102,9 +102,9 @@ class Worker(QThread):
             self.data_channels['Z-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Motor_position'].put_data((self.data_channels['Time'].get_data(1) / 10) + np.random.rand())
 
-    def draw_particle_positions(self, centers, pen=None):
+    def draw_particle_positions(self, centers, pen=None, radius=250):
         # TODO add function also for crosshair to help with alignment.
-        rx = int(250/self.c_p['image_scale'])
+        rx = int(radius/self.c_p['image_scale'])
         ry = rx
         if pen is None:
             self.qp.setPen(self.red_pen)
@@ -188,9 +188,11 @@ class Worker(QThread):
             self.qp.setPen(self.blue_pen)
             self.draw_central_circle()
             if self.c_p['tracking_on']:
-                self.draw_particle_positions(self.c_p['predicted_particle_positions'])
+                self.draw_particle_positions(self.c_p['predicted_particle_positions'], radius=100)
             if self.c_p['locate_pippette'] and self.c_p['pipette_location'][0] is not None:
-                self.draw_particle_positions([self.c_p['pipette_location']])
+                green_pen = QPen()
+                green_pen.setColor(QColor('green'))
+                self.draw_particle_positions([self.c_p['pipette_location']], green_pen)
             self.qp.end()
             self.changePixmap.emit(picture)
 

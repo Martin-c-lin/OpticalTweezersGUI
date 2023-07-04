@@ -78,8 +78,8 @@ class PortentaComms(Thread):
         self.outdata[20] = int(self.c_p['piezo_B'][1]/256)
         self.outdata[21] = int(self.c_p['piezo_B'][1]%256)
 
-        self.outdata[22] = int(self.c_p['motor_travel_speed']/256)
-        self.outdata[23] = int(self.c_p['motor_travel_speed']%256)
+        self.outdata[22] = int(self.c_p['motor_travel_speed'][0]/256) # TODO Check that these really are needed
+        self.outdata[23] = int(self.c_p['motor_travel_speed'][0]%256)
 
         # Rest of the data is reserved for future use
 
@@ -127,8 +127,8 @@ class PortentaComms(Thread):
             self.outdata[18 + i * 2] = self.c_p['piezo_B'][i] >> 8
             self.outdata[19 + i * 2] = self.c_p['piezo_B'][i] & 0xFF
         #print(self.outdata[14:21]) Correct
-        self.outdata[22] = self.c_p['motor_travel_speed'] >> 8
-        self.outdata[23] = self.c_p['motor_travel_speed'] & 0xFF
+        self.outdata[22] = self.c_p['motor_travel_speed'][0] >> 8
+        self.outdata[23] = self.c_p['motor_travel_speed'][0] & 0xFF
         self.outdata[24] = self.c_p['portenta_command_1']
         self.c_p['portenta_command_1'] = 0
         self.outdata[25] = self.c_p['portenta_command_2']
@@ -330,19 +330,24 @@ class PortentaComms(Thread):
         dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
 
         # Adjust speed depending on how far we are going
-        if dist_x**2 + dist_y**2 >10_000:
-            self.c_p['motor_travel_speed'] = 5000
+        if dist_x**2 >10_000:
+            self.c_p['motor_travel_speed'][0] = 5000
         else:
-            self.c_p['motor_travel_speed'] = 500
+            self.c_p['motor_travel_speed'][0] = 500
+
+        if dist_y**2 >10_000:
+            self.c_p['motor_travel_speed'][1] = 5000
+        else:
+            self.c_p['motor_travel_speed'][1] = 500
 
         # Changed the signs of this function
         if dist_x**2>100:
-            self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'] if dist_x > 0 else self.c_p['motor_travel_speed']
+            self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'][0] if dist_x > 0 else self.c_p['motor_travel_speed'][0]
         else:
             self.c_p['motor_x_target_speed'] = 0
 
         if dist_y**2>100:
-            self.c_p['motor_y_target_speed'] = self.c_p['motor_travel_speed'] if dist_y > 0 else -self.c_p['motor_travel_speed']
+            self.c_p['motor_y_target_speed'] = self.c_p['motor_travel_speed'][1] if dist_y > 0 else -self.c_p['motor_travel_speed'][1]
         else:
             self.c_p['motor_y_target_speed'] = 0
         """

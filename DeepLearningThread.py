@@ -45,15 +45,24 @@ def torch_unet_prediction(model, image, device, fac=1.4, threshold=260):
         return np.array([])
     # TODO do more of this in pytorch which is faster since it works on GPU
     rescaled_image = np.float32(np.reshape(rescaled_image,[1,1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1]]))
+    
+    torch.cuda.empty_cache() # TODO only do this if device is GPU
+    with torch.no_grad():
+        predicted_image = model(torch.tensor(rescaled_image).to(device))
+        resulting_image = predicted_image.detach().cpu().numpy()
+
+    """
     try:
         torch.cuda.empty_cache() # TODO only do this if device is GPU
-        predicted_image = model(torch.tensor(rescaled_image).to(device))
+        with torch.no_grad():
+            predicted_image = model(torch.tensor(rescaled_image).to(device))
     except Exception as E:
         print("GPU out of memory, using CPU instead")
         print(E)
         model.to("cpu")
-        predicted_image = model(torch.tensor(rescaled_image).to("cpu"))
-    resulting_image = predicted_image.detach().cpu().numpy()
+        with torch.no_grad():
+            predicted_image = model(torch.tensor(rescaled_image).to("cpu"))
+    """
     x,y,_ = fpt.find_particle_centers(np.array(resulting_image[0,0,:,:]), threshold)
     ret = []
     for x_,y_ in zip(x,y):
@@ -155,7 +164,7 @@ class DeepLearningAnalyserLDS(Thread):
         # TODO cut to area of interest here
         width = self.c_p['image'].shape[0]
         height = self.c_p['image'].shape[1]
-        max_w = 1200
+        max_w = 2400
         if width > max_w:
             x0 = int(width/2-max_w/2)
             x1 = int(width/2+max_w/2)
