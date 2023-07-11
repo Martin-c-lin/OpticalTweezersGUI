@@ -62,9 +62,10 @@ def default_c_p():
                             'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
                             'Photodiode_A','Photodiode_B',
+                            'T_time','Time_micros_low','Time_micros_high', # Moved this up
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
                             #
-                            'T_time','Time_micros_high','Time_micros_low',
+                            #'T_time','Time_micros_high','Time_micros_low',
                             'message',
                             'dac_ax','dac_ay','dac_bx','dac_by',
                             #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
@@ -77,6 +78,22 @@ def default_c_p():
                             'Photodiode_A','Photodiode_B',
 
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
+
+            'single_sample_channels':[
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+                            'message', # TODO fix message, actually saved force here
+                            'dac_ax','dac_ay','dac_bx','dac_by',
+                            'PSD_Force_A_saved',
+            ],
+
+            'multi_sample_channels':[
+                            'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
+                            'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
+                            'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
+                            'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
+                            'Photodiode_A','Photodiode_B',
+                            'T_time','Time_micros_low','Time_micros_high', # Moved this up
+                            ],
             'save_idx': 0, # Index of the saved data     
            # Piezo outputs
            'averaging_interval': 1000, # How many samples to average over in the data channels window
@@ -187,6 +204,59 @@ class DataChannel:
     data: np.array
     saving_toggled: bool = True
     max_len: int = 10_000_000 # 10_000_000 default
+    index: int = 0
+    full: bool = False
+    max_retrivable: int = 1
+
+    def __post_init__(self):
+        # Preallocate memory for the maximum length
+        self.data = np.zeros(self.max_len)
+
+    def put_data(self, d):
+        try:
+            if len(d) > self.max_len:
+                return
+        except TypeError:
+            d = [d]
+        
+        if self.index + len(d) >= self.max_len:
+            end_points = self.max_len - self.index
+            self.data[self.index:] = d[:end_points]
+            self.data[:len(d) - end_points] = d[end_points:]
+            self.full = True
+            self.index = (self.index + len(d)) % self.max_len
+            self.max_retrivable = self.max_len
+        else:
+            self.data[self.index:self.index + len(d)] = d
+            self.index += len(d)
+            self.max_retrivable = self.index
+
+    def get_data(self, nbr_points):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        if nbr_points <= self.index:
+            return self.data[self.index-nbr_points:self.index]
+        else:
+            return np.concatenate([self.data[self.index-nbr_points:], self.data[:self.index]])
+
+    def get_data_spaced(self, nbr_points, spacing=1):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        final = self.index
+        start = final - (final % spacing) - (nbr_points * spacing)
+        if start >= 0:
+            return self.data[start:final:spacing]
+        else:
+            last = (nbr_points * spacing + start) % self.max_len
+            return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
+
+"""
+@dataclass
+class DataChannel:
+# Works fine and equally fast as the other one.
+    name: str
+    unit: str
+    data: np.array
+    saving_toggled: bool = True
+    max_len: int = 10_000_000 # 10_000_000 default
     index: int = 1
     full: bool = False
     max_retrivable: int = 1
@@ -230,19 +300,7 @@ class DataChannel:
             print("Error lengths of data is", len(ret), nbr_points, len(self.data))
             return None
         return ret
-    """
-    def get_data(self, nbr_points):
-        nbr_points = min(nbr_points, self.max_retrivable)
-        diff = self.index-nbr_points
-        if diff > 0:
-            ret = self.data[self.index-nbr_points:self.index]
-        else:
-            ret = np.concatenate([self.data[self.index+diff:], self.data[:self.index]]).ravel()
-        if not len(ret) == nbr_points:
-            print("Error lengths of data is", len(ret), nbr_points, len(self.data))
-            return None
-        return ret
-    """    
+
     def get_data_spaced(self, nbr_points, spacing=1):
         nbr_points = min(nbr_points, self.max_retrivable)
         diff = self.index-nbr_points
@@ -255,95 +313,7 @@ class DataChannel:
             ret = np.concatenate([self.data[start::spacing], self.data[:last:spacing]]).ravel()
 
         return ret
-
 """
-@dataclass
-class DataChannel:
-    # New faster implementation of data channel class
-    name: str
-    unit: str
-    data: np.array
-    saving_toggled: bool = True
-    max_len: int = 1000_000 # 100 million works but is sometimes slow
-    index: int = 1
-    full: bool = False # True if all elements have been filled
-    max_retrivable: int = 1
-
-    def put_data(self, d):
-        # Check that it is correct length
-        try:
-            if len(d) > self.max_len:
-            # TODO throw an error
-                return
-        except TypeError:
-            # Someone very naughty sent something other than an array
-            d = [d]
-        if len(self.data) < self.max_len:
-            tmp = np.zeros(self.max_len)
-            tmp[:len(self.data)] = self.data
-            self.index = len(self.data)
-            self.data = tmp
-
-        if self.index+len(d) < self.max_len:
-            self.data[self.index:self.index+len(d)] = d
-            self.index += len(d)
-            if not self.full:
-                self.max_retrivable = self.index 
-        else:
-            end_points = self.max_len - self.index
-            self.data[-end_points:] = d[:end_points]
-            self.index = len(d) - end_points
-            self.data[:self.index] = d[end_points:]
-            self.full = True
-            self.max_retrivable = self.max_len
-
-    def get_data(self, nbr_points):
-        nbr_points = min(nbr_points, self.max_retrivable)
-        diff = self.index-nbr_points
-        if diff > 0:
-            # Simple case
-            ret = self.data[diff:self.index]
-        else:
-            ret = np.concatenate([self.data[diff:], self.data[:self.index]]).ravel()
-        if not len(ret) == nbr_points:
-            return None
-        return ret
-    def get_data_spaced(self, nbr_points, spacing=1):
-        
-        Function that returns nbr_points data with spacing as specified by spacing.
-        If there are not enough data it will return a lesser number of datapoints
-        keeping the specified spacing.
-
-        Parameters
-        ----------
-        nbr_points : TYPE int
-            DESCRIPTION. Maximum number of points to retrieve
-        spacing : TYPE, optional int
-            DESCRIPTION. The default is 1. Number of points between each desired
-            data points
-
-        Returns
-        -------
-        ret : TYPE np array
-            DESCRIPTION. Datapoints of channel
-
-        
-        nbr_points = min(nbr_points, self.max_retrivable)
-        diff = self.index-nbr_points
-        final = self.index
-        start = final - (final % spacing) - (nbr_points * spacing)
-        if diff > 0:
-            # Simple case
-            ret = self.data[start:final:spacing]
-        else:
-            last = (nbr_points*spacing+start)
-            ret = np.concatenate([self.data[start:-1:spacing],
-                                  self.data[final%spacing:last:spacing]]).ravel()
-
-        return ret
-"""
-
-
 
 def get_data_dicitonary_new():
     data = [
@@ -380,6 +350,7 @@ def get_data_dicitonary_new():
     ['F_total_X','pN'],
     ['F_total_Y','pN'],
     ['F_total_Z','pN'],
+    ['PSD_Force_A_saved','pN'],
     ['Photodiode/PSD SUM A','a.u.'],
     ['Photodiode/PSD SUM B','a.u.'],
     ['message','string'],

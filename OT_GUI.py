@@ -42,7 +42,7 @@ from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
 from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
-from ReadArduinoPortenta import PortentaComms
+from ReadArduinoPortenta import PortentaComms, portentaReaderThread
 from StepperObjective import ObjectiveStepperController
 import AutoController
 import LaserController
@@ -241,7 +241,7 @@ class MainWindow(QMainWindow):
         self.PortentaReaderT = None
         try:
             
-            self.PortentaReaderT = PortentaComms(self.c_p, self.data_channels) #PicReader(self.c_p, self.data_channels)
+            self.PortentaReaderT = PortentaComms(self.c_p, self.data_channels) #portentaReaderThread(self.c_p, self.data_channels) #portentaComms(self.c_p, self.data_channels)
             self.PortentaReaderT.start()
             sleep(0.1)
             """
@@ -420,7 +420,9 @@ class MainWindow(QMainWindow):
     def start_saving(self):
         # TODO make continous saving possible to avoid unneccesary saving
         self.start_idx = self.data_channels['PSD_A_P_X'].index
+        # TODO fix problem with the motor channels having fewer data points.
         self.saving = True
+        self.data_idx += 1
         print("Saving started")
 
     def stop_saving(self):
@@ -432,7 +434,7 @@ class MainWindow(QMainWindow):
         for channel in self.data_channels:
             if self.data_channels[channel].saving_toggled:
                 data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
-        filename = self.c_p['recording_path'] + '/' + self.c_p['filename']
+        filename = self.c_p['recording_path'] + '/' + self.c_p['filename'] + str(self.data_idx)
         with open(filename, 'wb') as f:
                 pickle.dump(data, f)
 
@@ -502,6 +504,7 @@ class MainWindow(QMainWindow):
         text, ok = QInputDialog.getText(self, 'Filename dialog', 'Enter name of your files:')
         if ok:
             self.video_idx = 0
+            self.data_idx
             self.c_p['image_idx'] = 0
             self.c_p['filename'] = text
             self.c_p['video_name'] = text + '_video' + str(self.video_idx)
