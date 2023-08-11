@@ -240,7 +240,7 @@ class SelectLaserPosition(MouseInterface):
         return "Click on the screen where the laser is located"
 
 class autoControllerThread(Thread):
-    def __init__(self, c_p, data_channels):
+    def __init__(self, c_p, data_channels, main_window=None):
         super().__init__()
         self.c_p = c_p
         self.setDaemon(True)
@@ -249,6 +249,7 @@ class autoControllerThread(Thread):
         self.search_direction = 1 
         self.y_lim_pos = 1 # search limits
         self.x_lim_pos = 0.1
+        self.main_window = main_window
 
 
     def find_closest_particle(self, center):
@@ -511,6 +512,10 @@ class autoControllerThread(Thread):
                 return
         else:
             self.look_for_particles()
+
+
+    def custom_RBC_protocol(self):
+        pass
 
 
     def run(self):

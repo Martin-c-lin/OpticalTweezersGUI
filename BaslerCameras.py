@@ -30,10 +30,22 @@ class BaslerCamera(CameraInterface):
                 if result.GrabSucceeded():
                     # Consider if we need to put directly in c_p?
                     image = np.uint8(self.img.GetArray())
-                    #self.img.Release()
+                    self.img.Release()  # This was commented out recently 
                     return image
         except TimeoutException as TE:
             print(f"Warning, camera timed out {TE}")
+        except Exception as ex:
+            """
+            Here we are catching all other exceptions, this is not good practice but done to catch when the camera
+            overheats.
+            Reconnecting is not trivial but ususally works after a few tries. The best way to prevent it is to lower the
+            framerate. This did not happen before improving the illumination and therby the framerate.
+            """
+            print(f"Warning, camera error!\n {ex}")
+            print("Trying to reconnect camera\n Camera may be overheating! Consider lowering framerate!")
+            self.disconnect_camera()
+            sleep(0.5)
+            self.connect_camera()
 
     def connect_camera(self):
         try:
@@ -51,12 +63,27 @@ class BaslerCamera(CameraInterface):
         self.stop_grabbing()
         self.cam.Close()
         self.cam = None
+
     def stop_grabbing(self):
         try:
             self.cam.StopGrabbing()
-        except:
+        except Exception as ex:
+            print(ex)
             pass
         self.is_grabbing = False
+
+    def set_frame_rate(self, frame_rate):
+        # TODO make it possible to disable frame rate
+        print("setting framerate")
+        self.cam.AcquisitionFrameRateEnable = True
+        self.cam.AcquisitionFrameRateEnable.SetValue(True)
+        
+        try:
+            #self.cam.AcquisitionFrameRate = frame_rate
+            self.cam.AcquisitionFrameRate.SetValue(float(frame_rate))
+        except Exception as ex:
+            print(f"Frame rate not accepted by camera, {ex}")
+        
 
     def set_AOI(self, AOI):
         '''

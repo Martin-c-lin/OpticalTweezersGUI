@@ -56,8 +56,6 @@ class LaserPiezoWidget(QWidget):
 
         layout.addWidget(self.piezo_Ay_slider)
 
-
-
         self.label_BX = QLabel("Piezo B x")
         layout.addWidget(self.label_BX)
 
@@ -148,7 +146,7 @@ class MinitweezersLaserMove(MouseInterface):
     
     def __init__(self, c_p ):
         self.c_p = c_p
-        self.speed_factor = 1/2
+        self.speed_factor = 300
         self.x_prev_A = 0
         self.y_prev_A = 0
         self.x_prev_B = 0
@@ -199,7 +197,7 @@ class MinitweezersLaserMove(MouseInterface):
         if self.c_p['mouse_params'][0] == 2: # B
             dx = int((self.c_p['mouse_params'][3] - self.x_prev_B)*self.speed_factor)
             dy = int((self.c_p['mouse_params'][4] - self.y_prev_B)*self.speed_factor)
-            self.c_p['piezo_B'][0] = self.check_limit(dx+self.c_p['piezo_B'][0])
+            self.c_p['piezo_B'][0] = self.check_limit(-dx+self.c_p['piezo_B'][0])
             self.c_p['piezo_B'][1] = self.check_limit(dy+self.c_p['piezo_B'][1])
 
             #print(f"Y Position of piezo B is {self.c_p['piezo_B']}")
@@ -210,5 +208,5 @@ class MinitweezersLaserMove(MouseInterface):
         return "Piezo manual move tool"
 
     def getToolTip(self):
-        return "Move the motors by clicking or dragging on the screen"
+        return "Move the laser by dragging on the screen.\n Left click for laser A, right click for laser B."
         

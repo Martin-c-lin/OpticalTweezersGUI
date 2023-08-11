@@ -22,6 +22,7 @@ from ThorlabsMotor import MotorThreadV2, PiezoThread
 from CustomMouseTools import MouseInterface
 from time import time, sleep
 
+
 # Maybe have this as a QThread?
 class MotorControllerWindow(QWidget):
     """
@@ -77,12 +78,14 @@ class MotorControllerWindow(QWidget):
         self.objective_forward_button = QPushButton('Sample forward')
         self.objective_forward_button.pressed.connect(self.objective_forward)
         self.objective_forward_button.released.connect(self.objective_stop)
+        self.objective_forward_button.setShortcut("pgup")
         self.objective_forward_button.setCheckable(False)
         layout.addWidget(self.objective_forward_button)
 
         self.objective_backward_button = QPushButton('Sample backward')
         self.objective_backward_button.pressed.connect(self.objective_backward)
         self.objective_backward_button.released.connect(self.objective_stop)
+        self.objective_backward_button.setShortcut("pgdown")
         self.objective_backward_button.setCheckable(False)
         layout.addWidget(self.objective_backward_button)
 
@@ -140,7 +143,9 @@ class MotorControllerWindow(QWidget):
         self.c_p['motor_z_target_speed'] = self.motor_speed
     def objective_stop(self):
         self.c_p['motor_z_target_speed'] = 0
+        #print("Button obj back released")
     def objective_backward(self):
+        #print("Button obj back pressed")
         self.c_p['motor_z_target_speed'] = - self.motor_speed
 
     
@@ -322,7 +327,10 @@ class MotorClickMove(MouseInterface):
         self.y_0_motor = 0
 
     def mousePress(self):
-
+        # self.c_p['move_to_location'] = False # Update here
+        #self.c_p['minitweezers_target_pos'][0] = self.data_channels['Motor_x_pos'].get_data(1)[0]
+        #self.c_p['minitweezers_target_pos'][1] = self.data_channels['Motor_y_pos'].get_data(1)[0]
+        #self.c_p['minitweezers_target_pos'][2] = self.data_channels['Motor_z_pos'].get_data(1)[0]
         # left click
         if self.c_p['mouse_params'][0] == 1:
             center_x = int((self.c_p['camera_width']/2 - self.c_p['AOI'][0])/self.c_p['image_scale'])
@@ -389,10 +397,12 @@ class MinitweezersMouseMove(MouseInterface):
         self.y_prev = 0
         self.z_prev = 0
         self.prev_t = time()
-        self.speed_factor = 600 # TODO make speed more accurate, also make it adjustable
+        self.speed_factor = 1000 # TODO make speed more accurate, also make it adjustable
 
     def mousePress(self):
-
+        self.c_p['minitweezers_target_pos'][0] = int(self.data_channels['Motor_x_pos'].get_data(1)[0])
+        self.c_p['minitweezers_target_pos'][1] = int(self.data_channels['Motor_y_pos'].get_data(1)[0])
+        self.c_p['minitweezers_target_pos'][2] = int(self.data_channels['Motor_z_pos'].get_data(1)[0])
         # left click
         if self.c_p['mouse_params'][0] == 1:
             # TODO change to laser position
@@ -413,9 +423,10 @@ class MinitweezersMouseMove(MouseInterface):
         if self.c_p['mouse_params'][0] == 3:
             self.z_0 = self.c_p['mouse_params'][2]
 
-        # Scroll wheel
-        elif self.c_p['mouse_params'][0] == 3:
-            self.y_prev = self.c_p['mouse_params'][2]
+        # Scroll wheel, 
+        # This code was never reached.
+        #elif self.c_p['mouse_params'][0] == 3:
+        #    self.y_prev = self.c_p['mouse_params'][2]
         
     def mouseRelease(self):
         self.c_p['motor_x_target_speed'] = 0
@@ -460,7 +471,7 @@ class MinitweezersMouseMove(MouseInterface):
             
         elif self.c_p['mouse_params'][0] == 3:
             dz = (self.c_p['mouse_params'][4] - self.z_prev)#/dt
-            z_speed = self.check_speed(dz * self.speed_factor)
+            z_speed = self.check_speed(dz * self.speed_factor/5)
             self.c_p['motor_z_target_speed'] = int(z_speed)
             self.z_prev = self.c_p['mouse_params'][4]
 

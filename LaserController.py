@@ -5,7 +5,7 @@ from PyQt6.QtCore import Qt
 
 # from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QAction, QIntValidator
-from PyQt6.QtCore import QTimer
+from PyQt6.QtCore import QTimer, QTime
 from threading import Thread
 import numpy as np
 import serial
@@ -18,12 +18,24 @@ class LaserControllerThread(Thread):
         self.setDaemon(True)
         self.c_p = c_p
 
+laser_powers = [
+    [124,130],
+    [174,174],
+    [224,224],
+    [274,274],
+    [330,310],
+    [274,274],
+    [224,224],
+    [174,174],
+    [124,130],
+]
 
 class LaserControllerWidget(QWidget):
 
-    def __init__(self, c_p):
+    def __init__(self, c_p, OT_GUI):
         super().__init__()
         self.c_p = c_p
+        self.OT_GUI = OT_GUI
         
         self.current_A_edit_val = self.c_p['laser_A_current']
         self.current_B_edit_val = self.c_p['laser_B_current']
@@ -34,6 +46,23 @@ class LaserControllerWidget(QWidget):
         self.init_laser_A()
         self.laser_A_on = False
         self.laser_B_on = False
+
+        # create a timer
+        self.timer = QTimer(self)
+
+        # set timer timeout callback function
+        self.timer.timeout.connect(self.RBC_auto_experiment)
+
+        # set the timer to fire every 100 milliseconds (1 second)
+        self.timer.start(100)
+        self.experiment_start_time = 0
+        self.current_power_start_time = 0
+        self.experiment_idx = 0
+        self.experiment_running = False
+        self.experiment_started = False
+        self.time_interval = 5
+
+
         self.initUI()
 
     def init_laser_A(self):
@@ -45,6 +74,72 @@ class LaserControllerWidget(QWidget):
         self.laser_A_ser.write(message.encode('utf-8'))
 
         # TODO query if the laser is on or off
+
+    def get_name(self, idx):
+        self.c_p['filename'] = 'RBC_experiment_no-'+str(self.experiment_idx)+ '_A' + str(laser_powers[idx][0]) + '-B' + str(laser_powers[idx][1])
+        return
+
+    def start_data_recording(self):
+        self.OT_GUI.start_saving()
+        if self.c_p['recording']:
+            self.OT_GUI.ToggleRecording()
+            print("Warning recording was already on, turning off")
+            time.sleep(0.05)
+        self.OT_GUI.ToggleRecording()
+        self.OT_GUI.snapshot()
+
+    def stop_data_recording(self):
+        self.OT_GUI.stop_saving()
+        if not self.c_p['recording']:
+            print("Warning recording was turned off")
+            return
+        self.OT_GUI.ToggleRecording()
+
+    def set_currents_for_RBC(self):
+        self.current_A_edit_val = int(laser_powers[self.experiment_idx][0])
+        self.current_B_edit_val = int(laser_powers[self.experiment_idx][1])
+        self.laserA_CurrentEdit.setText(str(self.current_A_edit_val))
+        self.laserB_CurrentEdit.setText(str(self.current_B_edit_val))
+        self.set_laser_A_current()
+        self.set_laser_B_current()
+        sleep(0.05)
+
+    def RBC_auto_experiment(self):
+        #print(f'Timer triggered as it should, time is {round(time()-self.experiment_start_time,1)}')
+        if not self.experiment_running:
+            if self.experiment_started:
+                self.stop_data_recording()
+                self.toggle_experiment_button.setChecked(False)
+            self.experiment_start_time = 0
+            self.current_power_start_time = 0
+            self.experiment_idx = 0
+            self.experiment_started = False
+            return
+
+        if self.experiment_idx == 0 and not self.experiment_started:
+            self.experiment_started = True
+            self.experiment_start_time = time()
+            self.current_power_start_time = time()
+            self.set_currents_for_RBC()
+            self.get_name(self.experiment_idx)
+            self.start_data_recording()
+            
+        if self.c_p['program_running'] and self.experiment_running:
+            dt = time()-self.current_power_start_time 
+            if dt > self.time_interval:
+                print(f"Stopped recording data{dt}\n {self.experiment_idx}")
+                self.stop_data_recording()
+                self.current_power_start_time = time()
+                self.experiment_idx += 1
+                if self.experiment_idx >= len(laser_powers):
+                    print("Experiment done")
+                    self.experiment_running = False
+                    self.experiment_started = False
+                    self.toggle_experiment_button.setChecked(False)
+                    return
+                self.set_currents_for_RBC()
+                self.get_name(self.experiment_idx)
+                self.start_data_recording()
 
     def initUI(self):
         layout = QVBoxLayout()
@@ -106,6 +201,11 @@ class LaserControllerWidget(QWidget):
         self.set_both_currents_button = QPushButton("Set currents", self)
         self.set_both_currents_button.clicked.connect(self.set_both_currents)
         self.laserB_layout.addRow("Set both currents", self.set_both_currents_button)
+
+        self.toggle_experiment_button = QPushButton("Toggle automatic RBC experiment", self)
+        self.toggle_experiment_button.clicked.connect(self.toggle_RBC_experiment)
+        self.toggle_experiment_button.setCheckable(True)
+        self.laserB_layout.addRow("Toggle experiment", self.toggle_experiment_button)
        
         layout.addLayout(self.laserB_layout)
 
@@ -153,6 +253,12 @@ class LaserControllerWidget(QWidget):
     
     def tempCurrentB(self, current):
         self.current_B_edit_val = int(current)
+
+    def set_laser_A_port(self,port):
+        self.c_p['laser_A_port'] = port
+
+    def toggle_RBC_experiment(self):
+        self.experiment_running = not self.experiment_running
 
     def set_both_currents(self):
         self.set_laser_A_current()

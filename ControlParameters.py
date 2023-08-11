@@ -21,9 +21,11 @@ def default_c_p():
 
     """
     c_p = {
+            # General c_p of the UI
            'program_running': True,
            'mouse_params': [0, 0, 0, 0, 0, 0],
            'click_tools': [],
+           'central_circle_on': True,
 
            # Camera c_p
            'image': np.ones([500, 500]),#, 1]),
@@ -34,7 +36,8 @@ def default_c_p():
            'camera_height': 1080,
            'recording': False,
            'exposure_time': 5000,
-           'fps': 50,  # Frames per second of camera
+           'fps': 50,  # Frames per second of camera, measured
+           'target_frame_rate': 50, # Target frame rate of the camera, if you want it limited.
            'filename': '',
            'video_name': 'Video',
            'video_format': 'avi',
@@ -46,7 +49,7 @@ def default_c_p():
            'bitrate': '30000000', # Bitrate of video to be saved
            'frame_queue': Queue(maxsize=2_000_000),  # Frame buffer essentially
            'image_scale': 1,
-           'microns_per_pix': 1/18.28, #30/5000 * 1e-3, # 5000 pixels per 30 micron roughly(downstairs), changed to have more movements, System dependent!
+           'microns_per_pix': 1/18.28, # Note this parameter is system dependent!
 
            # Temperature c_p
            'temperature_output_on':False,
@@ -133,15 +136,20 @@ def default_c_p():
             'AD_tube_position': [0,0,0], # Position of the AD tube in the chamber, motor coordinates
 
             # Minitweezers controller parameters
-            'COM_port': 'COM9',#'COM9',
+            'COM_port': 'COM6',#'COM9',
             'minitweezers_connected': False,
             'blue_led': 0, # Wheter the blue led is on or off, 0 for on and 1 for off
-            'objective_stepper_port': 'COM2',
+            'objective_stepper_port': 'COM4',
             'PSD_bits_per_micron_sum': 0.0703, # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns 
 
+            # Minitweezers protocols parameters
+            'protocol_running': False,
+            'protocol_type': 'Constant speed', # Options are constant force, constant velocity, constant distance
+            'protocol_data': np.uint8(np.zeros(13)),
+
             # Laser parameters
-            'laser_A_port':'COM10',
-            'laser_B_port':'COM8',
+            'laser_A_port':'COM8',
+            'laser_B_port':'COM9',
             'laser_A_current': 370, # Current in mA
             'laser_B_current': 330, # Current in mA
             'laser_A_on': False,
@@ -155,7 +163,7 @@ def default_c_p():
            'minitweezers_target_speed': [0,0,0],
            'motor_travel_speed': [2_000,2_000], # 5000 was somewhat high Speed of move to location.
            'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
-           'ticks_per_micron': 24.45, # How many ticks per micron
+           'ticks_per_micron': 5.48,#24.45, # How many ticks per micron
            'ticks_per_pixel': 0.3, #1.337, # How many pixels per micron
             # TODO add a fix to when the controller is disconnected.
            
@@ -237,7 +245,7 @@ class DataChannel:
             return self.data[self.index-nbr_points:self.index]
         else:
             return np.concatenate([self.data[self.index-nbr_points:], self.data[:self.index]])
-
+    
     def get_data_spaced(self, nbr_points, spacing=1):
         nbr_points = min(nbr_points, self.max_retrivable)
         final = self.index
@@ -247,6 +255,31 @@ class DataChannel:
         else:
             last = (nbr_points * spacing + start) % self.max_len
             return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
+    """
+    def get_data_spaced(self, nbr_points, spacing=1):
+        # Updated this to include the last index correctly.
+        nbr_points = min(nbr_points, int(self.max_retrivable/spacing))
+        final = self.index
+        start = final - ((nbr_points-1) * spacing)
+        if start >= 0:
+            return self.data[start:final+1:spacing]
+        else:
+            last = (nbr_points * spacing + start) % self.max_len
+            return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
+    
+    def get_data_spaced(self, nbr_points, spacing=1):
+        nbr_points = min(nbr_points, self.max_retrivable)
+        final = self.index + 1  # +1 to make sure the final index is included
+        start = final - (nbr_points - 1) * spacing - 1  # Calculate start based on nbr_points and spacing
+
+        # Make sure the start index is within bounds
+        if start >= 0:
+            return self.data[start:final:spacing]
+        else:
+            # Handle the case where start is negative
+            last = (nbr_points * spacing + start) % self.max_len
+            return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
+    """
 
 """
 @dataclass
@@ -326,6 +359,7 @@ def get_data_dicitonary_new():
     ['Motor_x_speed','ticks/s'],
     ['Motor_y_speed','ticks/s'],
     ['Motor_z_speed','ticks/s'],
+    ['Motor time','microseconds'],
     ['PSD_A_P_X','bits'],
     ['PSD_A_P_Y','bits'],
     ['PSD_A_P_sum','bits'],

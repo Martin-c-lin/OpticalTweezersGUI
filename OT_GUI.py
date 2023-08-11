@@ -43,6 +43,7 @@ from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLea
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
 from ReadArduinoPortenta import PortentaComms, portentaReaderThread
+from PullingProtocolWidget import PullingProtocolWidget
 from StepperObjective import ObjectiveStepperController
 import AutoController
 import LaserController
@@ -186,7 +187,8 @@ class Worker(QThread):
             # Draw zoom in rectangle
             self.c_p['click_tools'][self.c_p['mouse_params'][5]].draw(self.qp)
             self.qp.setPen(self.blue_pen)
-            self.draw_central_circle()
+            if self.c_p['central_circle_on']:
+                self.draw_central_circle()
             if self.c_p['tracking_on']:
                 self.draw_particle_positions(self.c_p['predicted_particle_positions'], radius=100)
             if self.c_p['locate_pippette'] and self.c_p['pipette_location'][0] is not None:
@@ -317,7 +319,7 @@ class MainWindow(QMainWindow):
         # Here is where all the tools in the mouse toolbar are added
         self.c_p['click_tools'].append(CameraClicks(self.c_p))
         self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels))
-        self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors
+        # self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors
         self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
         #self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['click_tools'].append(AutoController.SelectLaserPosition(self.c_p))
@@ -379,7 +381,7 @@ class MainWindow(QMainWindow):
 
             format_command= partial(self.set_image_format, f)
             format_action = QAction(f, self)
-            format_action.setStatusTip(f"Set recording format to {f}")
+            format_action.setStatusTip(f"Set image format to {f}")
             format_action.triggered.connect(format_command)
             image_format_submenu.addAction(format_action)
 
@@ -420,6 +422,7 @@ class MainWindow(QMainWindow):
     def start_saving(self):
         # TODO make continous saving possible to avoid unneccesary saving
         self.start_idx = self.data_channels['PSD_A_P_X'].index
+        self.start_idx_motors = self.data_channels['Motor_x_pos'].index # Fewer data points for motors
         # TODO fix problem with the motor channels having fewer data points.
         self.saving = True
         self.data_idx += 1
@@ -429,11 +432,16 @@ class MainWindow(QMainWindow):
         self.saving = False
         print("Saving stopped")
         self.stop_idx = self.data_channels['PSD_A_P_X'].index
+        self.stop_idx_motors = self.data_channels['Motor_x_pos'].index
         sleep(0.1) # Waiting for all channels to reach this point
         data = {}
         for channel in self.data_channels:
             if self.data_channels[channel].saving_toggled:
-                data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
+                if channel in self.c_p['multi_sample_channels']:
+                    data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
+                else:
+                    data[channel] = self.data_channels[channel].data[self.start_idx_motors:self.stop_idx_motors]
+
         filename = self.c_p['recording_path'] + '/' + self.c_p['filename'] + str(self.data_idx)
         with open(filename, 'wb') as f:
                 pickle.dump(data, f)
@@ -504,10 +512,10 @@ class MainWindow(QMainWindow):
         text, ok = QInputDialog.getText(self, 'Filename dialog', 'Enter name of your files:')
         if ok:
             self.video_idx = 0
-            self.data_idx
+            self.data_idx = 0
             self.c_p['image_idx'] = 0
             self.c_p['filename'] = text
-            self.c_p['video_name'] = text + '_video' + str(self.video_idx)
+            self.c_p['video_name'] = text + '_video_' + str(self.video_idx)
             print(f"Filename is now {text}")
 
     def save_position(self):
@@ -626,6 +634,11 @@ class MainWindow(QMainWindow):
         self.open_laser_window_action.setCheckable(False)
         window_menu.addAction(self.open_laser_window_action)
 
+        self.open_pulling_protocoL_window  = QAction("Pulling protocol", self)
+        self.open_pulling_protocoL_window.setToolTip("Opens a window for the pulling protocol.")
+        self.open_pulling_protocoL_window.triggered.connect(self.openPullingProtocolWindow)
+        self.open_pulling_protocoL_window.setCheckable(False)
+        window_menu.addAction(self.open_pulling_protocoL_window)
 
 
     def openPlanktonViwer(self):
@@ -633,7 +646,7 @@ class MainWindow(QMainWindow):
 
     def open_laser_window(self):
         # TODO make it impossible to open more than one of these windows
-        self.laser_window = LaserController.LaserControllerWidget(self.c_p)
+        self.laser_window = LaserController.LaserControllerWidget(self.c_p, self)
         self.laser_window.show()
 
     def open_channels_winoow(self):
@@ -651,6 +664,10 @@ class MainWindow(QMainWindow):
         self.obective_controller = ObjectiveStepperController(self.c_p, self.ArduinoUnoSerial)
         self.obective_controller.show()
 
+    def openPullingProtocolWindow(self):
+        self.pulling_protocol_window = PullingProtocolWidget(self.c_p)
+        self.pulling_protocol_window.show()
+
     def open_thorlabs_motor_control_window(self):
         self.MCW_T = MotorControlWidget.ThorlabsMotorWindow(self.c_p)
         self.MCW_T.show()
@@ -665,6 +682,11 @@ class MainWindow(QMainWindow):
         # Updates the exposure time of the camera to what is inside the textbox
         self.c_p['exposure_time'] = float(self.exposure_time_LineEdit.text())
         self.c_p['new_settings_camera'] = [True, 'exposure_time']
+
+    def set_frame_rate(self):
+        # Updates the frame rate of the camera to what is inside the textbox
+        self.c_p['target_frame_rate'] = float(self.frame_rate_LineEdit.text())
+        self.c_p['new_settings_camera'] = [True, 'frame_rate']
 
     def set_save_path(self):
         fname = QFileDialog.getExistingDirectory(self, "Save path")
@@ -859,13 +881,30 @@ def create_camera_toolbar_external(main_window):
     main_window.camera_toolbar.addWidget(main_window.exposure_time_LineEdit)
     main_window.camera_toolbar.addAction(main_window.set_exp_tim)
 
+
+    main_window.set_frame_rate_action = QAction("Set target fps", main_window)
+    main_window.set_frame_rate_action.setToolTip("Sets frame rate to the value in the textboox,\n is an upper bound on the actual frame rate.")
+    main_window.set_frame_rate_action.triggered.connect(main_window.set_frame_rate)
+
+    main_window.frame_rate_LineEdit = QLineEdit()
+    main_window.frame_rate_LineEdit.setValidator(QDoubleValidator(0.1,99.99,2))
+    main_window.frame_rate_LineEdit.setText(str(main_window.c_p['target_frame_rate']))
+    main_window.camera_toolbar.addWidget(main_window.frame_rate_LineEdit)
+    main_window.camera_toolbar.addAction(main_window.set_frame_rate_action)
+
+
+    main_window.set_gain_action = QAction("Set gain", main_window)
+    main_window.set_gain_action.setToolTip("Sets software gain to the value in the textboox")
+    main_window.set_gain_action.triggered.connect(main_window.set_gain)
+
     # TODO add offset and label to this        
     main_window.gain_LineEdit = QLineEdit()
     main_window.gain_LineEdit.setToolTip("Set software gain on displayed image.")
     main_window.gain_LineEdit.setValidator(QDoubleValidator(0.1,3,3))
     main_window.gain_LineEdit.setText(str(main_window.c_p['image_gain']))
-    main_window.gain_LineEdit.textChanged.connect(main_window.set_gain)
+    #main_window.gain_LineEdit.textChanged.connect(main_window.set_gain)
     main_window.camera_toolbar.addWidget(main_window.gain_LineEdit)
+    main_window.camera_toolbar.addAction(main_window.set_gain_action)
 
     main_window.toggle_data_record_action = QAction("Start saving data", main_window)
     main_window.toggle_data_record_action.setToolTip("Turn ON recodording of data.\n Data will be saved to fileneame set in files windows.")

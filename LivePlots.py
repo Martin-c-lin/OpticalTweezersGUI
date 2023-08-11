@@ -267,7 +267,7 @@ class PlotWindow(QMainWindow):
         self.y2 = [randint(0, 100) for _ in range(100)]  # 100 data points
         self.default_plot_length = 500
         self.color_idx = 0 # to keep track of which color to use next
-
+        self.circle = None
         self.aspect_locked = aspect_locked
         self.graphWidget.setAspectLocked(self.aspect_locked,1)
         self.graphWidget.showGrid(x=grid_on, y=grid_on, alpha=0.5)  
@@ -287,7 +287,7 @@ class PlotWindow(QMainWindow):
             }
 
         self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
-        self.plot_data['sub_sample'] = np.ones(len(x_keys), int)
+        self.plot_data['sub_sample'] = 10*np.ones(len(x_keys), int) # Changed subsampling here 
         self.plot_data['pen'] = [pg.mkPen(color=Colors['red']) for _ in x_keys]
         self.data_lines = []
         # TODO,have better default plots.
@@ -314,7 +314,7 @@ class PlotWindow(QMainWindow):
         self.add_circle_action = QAction("Add circle", self)
         self.add_circle_action.setToolTip("Adds a circle in the center of the graph")
         self.add_circle_action.triggered.connect(self.add_circle)
-        self.add_circle_action.setCheckable(False) # Should be true
+        self.add_circle_action.setCheckable(True) # Should be true
 
         self.plot_axis_action = QAction("Adjust plot axis", self)
         self.plot_axis_action.setToolTip("Manually change the axis limits.")
@@ -349,13 +349,20 @@ class PlotWindow(QMainWindow):
             print(f"Adding plot {x} vs {y}")
 
     def add_circle(self):
-        radius=100.0
-        center=[0,0]
-        self._t = np.linspace(0,2*np.pi,100)
-        self.x_c = (radius * np.cos(self._t)) + center[0]
-        self.y_c = (radius * np.sin(self._t)) + center[1]
-        pen = pg.mkPen(color=Colors['white'])
-        self.circle = self.graphWidget.plot(self.x_c, self.y_c, pen=pen)
+
+        if self.circle is None:
+            radius=100.0
+            center=[0,0]
+            self._t = np.linspace(0,2*np.pi,100)
+            self.x_c = (radius * np.cos(self._t)) + center[0]
+            self.y_c = (radius * np.sin(self._t)) + center[1]
+            pen = pg.mkPen(color=Colors['white'])
+            self.circle = self.graphWidget.plot(self.x_c, self.y_c, pen=pen)
+            self.circle.setVisible(True)
+            return 
+        if self.circle.isVisible():
+            self.circle.setVisible(False)
+            return
         self.circle.setVisible(True)
 
     def set_axis_labels(self):
@@ -441,7 +448,7 @@ class PlotWindow(QMainWindow):
             # Create submenu for setting colors
             Plot_1_menu.setTitle(f"Plot {idx} settings")
             
-            color_submenu = Plot_1_menu.addMenu("Color")
+            color_submenu = Plot_1_menu.addMenu("Plot color")
             for col in Colors:
                 
                 color_command = partial(self.set_plot_color, Colors[col], idx)
@@ -449,6 +456,15 @@ class PlotWindow(QMainWindow):
                 set_col.setStatusTip(f"Set plot color to {col}")
                 set_col.triggered.connect(color_command)
                 color_submenu.addAction(set_col)
+
+            symbol_color_submenu = Plot_1_menu.addMenu("Symbol color")
+            for col in Colors:
+
+                color_command = partial(self.set_symbol_color, Colors[col], idx)
+                set_col = QAction(col, self)
+                set_col.setStatusTip(f"Set plot symbol color to {col}")
+                set_col.triggered.connect(color_command)
+                symbol_color_submenu.addAction(set_col)
 
             x_data_submenu = Plot_1_menu.addMenu("X-data")
             for data_idx, x in enumerate(self.data):
@@ -549,11 +565,20 @@ class PlotWindow(QMainWindow):
     def set_bg_color(self, color):
         self.graphWidget.setBackground(color)
 
+    def set_symbol_color(self, color, idx):
+        pen = pg.mkPen(color=color)
+        line = self.data_lines[idx]
+        line.setSymbolPen(pen)
+        line.setSymbolBrush(color) # Can be used to set the symbol color
+        # todo TEST AND SEE if we need to save the pen.
+
     def set_plot_color(self, color, idx):
         pen = pg.mkPen(color=color)
         line = self.data_lines[idx]
         line.setPen(pen)
-        line.setSymbolPen(pen)
+        # line.setSymbolPen(pen)
+        # line.setSymbolBrush(color) # Can be used to set the symbol color
+
         if idx == len(self.plot_data['pen']):
             self.plot_data['pen'].append(pen)
             return
@@ -564,18 +589,19 @@ class PlotWindow(QMainWindow):
         plot_name = f" {x_data} vs {self.plot_data['y'][idx]}"
         self.graphWidget.removeItem(self.data_lines[idx])
         self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
-                                                     pen=self.plot_data['pen'][idx])#, symbol=self.plot_data['symbol'][idx])
+                                                     pen=self.plot_data['pen'][idx])
         
     def set_y_data(self, idx, y_data):
         self.plot_data['y'][idx] = y_data
         plot_name = f" {self.plot_data['x'][idx]} vs {y_data}"
         self.graphWidget.removeItem(self.data_lines[idx])
         self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
-                                                     pen=self.plot_data['pen'][idx])#, symbol=self.plot_data['symbol'][idx])
+                                                     pen=self.plot_data['pen'][idx])
 
     def __del__(self):
         for widget in self.sub_widgets:
             widget.close()
+
     def close(self):
         for widget in self.sub_widgets:
             widget.close()

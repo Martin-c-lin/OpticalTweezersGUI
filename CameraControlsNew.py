@@ -13,7 +13,11 @@ from time import sleep, strftime, perf_counter
 from threading import Thread
 from copy import copy, deepcopy
 # from queue import Queue
+
 import skvideo.io
+# run this command to install ffmpeg properly : "conda install ffmpeg -c mrinaljain17"
+
+
 import numpy as np
 from CustomMouseTools import MouseInterface
 from PyQt6.QtGui import  QColor,QPen
@@ -99,6 +103,8 @@ class CameraInterface(metaclass=abc.ABCMeta):
                 callable(subclass.get_sensor_size) and
                 hasattr(subclass, 'set_exposure_time') and
                 callable(subclass.set_exposure_time) and
+                hasattr(subclass, 'set_frame_rate') and
+                callable(subclass.set_frame_rate) and
                 hasattr(subclass, 'capture_image') and
                 callable(subclass.capture_image) or
                 NotImplemented)
@@ -158,6 +164,8 @@ class CameraThread(Thread):
             self.camera.set_AOI(self.c_p['AOI'])
         elif self.c_p['new_settings_camera'][1] == 'exposure_time':
             self.camera.set_exposure_time(self.c_p['exposure_time'])
+        elif self.c_p['new_settings_camera'][1] == 'frame_rate':
+            self.camera.set_frame_rate(self.c_p['target_frame_rate'])
 
         # Resetting the new_settings_camera parameter
         self.c_p['new_settings_camera'] = [False, None]
@@ -203,8 +211,8 @@ def create_avi_video_writer(c_p, video_name, image_width, image_height):
     exp_info_params : Dictionary
         Dictionary with controlparameters describing the experiment.
     '''
-    fourcc = cv2.VideoWriter_fourcc(*'MJPG')
-
+    fourcc = cv2.VideoWriter_fourcc(*'MJPG') 
+    
     video_name = c_p['recording_path'] + '/' + video_name + '.avi'
     if len(np.shape(c_p['image'])) > 2 and np.shape(c_p['image'])[2] == 3:
         video = cv2.VideoWriter(video_name, fourcc, min(500, c_p['fps']),
@@ -228,7 +236,7 @@ def create_mp4_video_writer(c_p, video_name=None, image_width=None,
     if tmp < 25:
         print('Warning, skvideo cannot handle framerates below 25 fps so\
         reverting to 25.')
-
+    # TODO figure out why this does not work on all computers and how to fix it.
     video_name = c_p['recording_path'] + '/' + video_name + '.mp4'
     # TODO fix so that exceptions in recording path can be handled
     video = skvideo.io.FFmpegWriter(video_name, outputdict={
@@ -443,6 +451,14 @@ class VideoWriterThread(Thread):
 
         self.video_created = True
 
+    def write_video_info(self, filename):
+        filepath = self.c_p['recording_path'] + '/' + filename+'_info.txt'
+        with open(filepath, 'w') as f:
+            f.write("Video framerate:"+str(self.c_p['fps'])+ "fps\n")
+            f.write("Exposure time "+str(self.c_p['exposure_time']) +"microseconds (or milliseconds depending on model of camera)\n")
+            f.write("Video format: "+str(self.c_p['video_format'])+"\n")
+            f.write("Video resolution: "+str(self.video_width)+"x"+str(self.video_height) +"\n")
+
     def run(self):
         self.c_p['video_idx'] = 0
         while self.c_p['program_running']:
@@ -481,9 +497,10 @@ class VideoWriterThread(Thread):
                         # change format
                         size = '_' + str(self.video_width) + 'x'
                         size += str(self.video_height)
-                        size += '_' + str(self.c_p['video_idx']) 
-                        self.c_p['video_idx'] += 1
-                        self.create_video_writer(self.video_name+size)
+                        #size += '_' + str(self.c_p['video_idx']) 
+                        #self.c_p['video_idx'] += 1
+                        self.write_video_info(self.video_name+size)
+                        self.create_video_writer(self.video_name+size) # Changed so that there is only one index.
                     self.last_frame_format = self.format
                     self.write_frame()
                 else:
