@@ -15,8 +15,9 @@ class ObjectiveStepperController(QWidget):
         self.last_write = "Q"
         self.ArduinoUnoSerial = ArduinoUnoSerial
 
-        self.label = QLabel("Objective controller")
-        layout.addWidget(self.label)
+        #self.label = QLabel("Objective controller")
+        #layout.addWidget(self.label)
+        self.setWindowTitle("Objective controller")
         
         # Add move towards button
         self.slow_towards_button = QPushButton('Slow towards sample')

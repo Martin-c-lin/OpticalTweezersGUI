@@ -53,11 +53,11 @@ def default_c_p():
 
            # Temperature c_p
            'temperature_output_on':False,
-           
+
            # Piezo c_p (xyz separete stage)
            'piezo_targets': [10,10,10],
            'piezo_pos': [10,10,10],
-           
+
            # PIC reader c_p
            'pic_channels':[# Channels to read from the controller
                             'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
@@ -66,7 +66,7 @@ def default_c_p():
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
                             'Photodiode_A','Photodiode_B',
                             'T_time','Time_micros_low','Time_micros_high', # Moved this up
-                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos',
                             #
                             #'T_time','Time_micros_high','Time_micros_low',
                             'message',
@@ -83,7 +83,7 @@ def default_c_p():
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
 
             'single_sample_channels':[
-                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos', 
+                            'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos',
                             'message', # TODO fix message, actually saved force here
                             'dac_ax','dac_ay','dac_bx','dac_by',
                             'PSD_Force_A_saved',
@@ -97,7 +97,7 @@ def default_c_p():
                             'Photodiode_A','Photodiode_B',
                             'T_time','Time_micros_low','Time_micros_high', # Moved this up
                             ],
-            'save_idx': 0, # Index of the saved data     
+            'save_idx': 0, # Index of the saved data
            # Piezo outputs
            'averaging_interval': 1000, # How many samples to average over in the data channels window
            'piezo_A': np.uint16([32768, 32768]),
@@ -126,7 +126,7 @@ def default_c_p():
             'centering_on': False,
             'trap_particle': False,
             'search_and_trap': False,
-            'laser_position': [2660, 1502.3255814], #[1520,1830], # Default 
+            'laser_position': [2660, 1502.3255814], #[1520,1830], # Default
             'locate_pippette': False, # TODO fix speling error
             'pipette_location': [0,0], # Location of the pipette in the image
             'pipette_location_chamber': [0,0,0], # Location of the pipette in the chamber
@@ -140,7 +140,10 @@ def default_c_p():
             'minitweezers_connected': False,
             'blue_led': 0, # Wheter the blue led is on or off, 0 for on and 1 for off
             'objective_stepper_port': 'COM4',
-            'PSD_bits_per_micron_sum': 0.0703, # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns 
+            'PSD_bits_per_micron_sum': 0.0703, # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns
+
+            'PSD_to_pos': [14.252,12.62], # The calibration factor for the position PSDs,
+            # pos_microns = PSD_A_X/PSD_A_sum *PSD_to_pos[0], calibrated the 30th of August 2023
 
             # Minitweezers protocols parameters
             'protocol_running': False,
@@ -166,7 +169,7 @@ def default_c_p():
            'ticks_per_micron': 5.48,#24.45, # How many ticks per micron
            'ticks_per_pixel': 0.3, #1.337, # How many pixels per micron
             # TODO add a fix to when the controller is disconnected.
-           
+
 
            # Thorlabs motors
            'disconnect_motor':[False,False,False],
@@ -226,7 +229,7 @@ class DataChannel:
                 return
         except TypeError:
             d = [d]
-        
+
         if self.index + len(d) >= self.max_len:
             end_points = self.max_len - self.index
             self.data[self.index:] = d[:end_points]
@@ -245,7 +248,7 @@ class DataChannel:
             return self.data[self.index-nbr_points:self.index]
         else:
             return np.concatenate([self.data[self.index-nbr_points:], self.data[:self.index]])
-    
+
     def get_data_spaced(self, nbr_points, spacing=1):
         nbr_points = min(nbr_points, self.max_retrivable)
         final = self.index
@@ -266,7 +269,7 @@ class DataChannel:
         else:
             last = (nbr_points * spacing + start) % self.max_len
             return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
-    
+
     def get_data_spaced(self, nbr_points, spacing=1):
         nbr_points = min(nbr_points, self.max_retrivable)
         final = self.index + 1  # +1 to make sure the final index is included
@@ -318,7 +321,7 @@ class DataChannel:
             self.data[:self.index] = d[end_points:]
             self.full = True
             self.max_retrivable = self.max_len
-        
+
         if self.index == self.max_len:  # Added this line
             self.index = 0
 
@@ -393,7 +396,7 @@ def get_data_dicitonary_new():
     ['dac_bx','bits'],
     ['dac_by','bits'],
     ]
-    
+
     data_dict = {}
     for channel in data:
         data_dict[channel[0]] = DataChannel(channel[0],channel[1],[0])
@@ -431,6 +434,6 @@ def load_example_image(c_p):
     None.
 
     """
-    
+
     img = Image.open("./Example data/BG_image.jpg")
     c_p['image'] = np.asarray(img)

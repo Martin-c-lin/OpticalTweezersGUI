@@ -92,6 +92,7 @@ def find_particle_centers(image,threshold=120, particle_size_threshold=200,
     thresholded_image = cv2.blur(image, (8, 8)) > threshold
     if fill_holes:
         # Fill holes in the image before labeling
+        # Something wrong with fill_holes when using dark particle
         thresholded_image = ndi.morphology.binary_fill_holes(thresholded_image)
     #cv2.medianBlur(image, 5) > threshold # Added thresholding here
 
@@ -190,7 +191,7 @@ def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=10_000,
         # Fill holes in the image before labeling
         thresholded_image = cp_ndi.morphology.binary_fill_holes(thresholded_image)
 
-        
+
     separate_particles_image = measure.label(cp.asnumpy(thresholded_image))
     # Count the number of pixels in each section
     counts = np.bincount(np.reshape(separate_particles_image,(np.shape(separate_particles_image)[0]*np.shape(separate_particles_image)[1])))

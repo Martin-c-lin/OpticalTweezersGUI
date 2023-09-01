@@ -42,7 +42,9 @@ from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
 from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
-from ReadArduinoPortenta import PortentaComms, portentaReaderThread
+from ReadArduinoPortenta import PortentaComms
+# from PortentaMultiprocess import PortentaComms
+
 from PullingProtocolWidget import PullingProtocolWidget
 from StepperObjective import ObjectiveStepperController
 import AutoController
@@ -240,6 +242,7 @@ class MainWindow(QMainWindow):
             print(E)
 
         """
+        self.channelView = None
         self.PortentaReaderT = None
         try:
             
@@ -482,10 +485,13 @@ class MainWindow(QMainWindow):
         self.reset_force_psds_action.triggered.connect(self.reset_force_PSDs)
         action_menu.addAction(self.reset_force_psds_action)
 
-        self.saved_positions_submenu = action_menu.addMenu("Saved positions")
+        self.saved_positions_submenu = action_menu.addMenu("Go to saved positions")
 
         for idx in range(len(self.c_p['saved_positions'])):
             self.add_position(idx)
+        
+        # Todo add option to remove positions, set shortcut, move position etc.
+        # self.remove_positions_submenu = action_menu.addMenu("Remove saved positions")
 
     def zero_force_PSDs(self):
         self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_X'].get_data_spaced(1000)))
@@ -493,13 +499,13 @@ class MainWindow(QMainWindow):
 
         self.c_p['PSD_means'][2] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_X'].get_data_spaced(1000)))
         self.c_p['PSD_means'][3] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_Y'].get_data_spaced(1000)))
-        print(self.c_p['PSD_means'])
+
         self.c_p['portenta_command_1'] = 1
 
     def reset_force_PSDs(self):
         self.c_p['portenta_command_1'] = 2
 
-    def add_position(self,idx):
+    def add_position(self, idx):
         # Adds position to submenu
         position_command = partial(self.goto_position, idx)
         position_action = QAction(self.c_p['saved_positions'][idx][0], self)
@@ -507,6 +513,10 @@ class MainWindow(QMainWindow):
         position_action.triggered.connect(position_command)
         self.saved_positions_submenu.addAction(position_action) # Check how to remove this
         # TODO add a remove position option as well as rename and check position values.
+
+    def remove_position(self, idx):
+        # Removes position from submenu
+        pass
 
     def set_default_filename(self):
         text, ok = QInputDialog.getText(self, 'Filename dialog', 'Enter name of your files:')
@@ -665,7 +675,7 @@ class MainWindow(QMainWindow):
         self.obective_controller.show()
 
     def openPullingProtocolWindow(self):
-        self.pulling_protocol_window = PullingProtocolWidget(self.c_p)
+        self.pulling_protocol_window = PullingProtocolWidget(self.c_p, self.data_channels)
         self.pulling_protocol_window.show()
 
     def open_thorlabs_motor_control_window(self):
@@ -786,6 +796,7 @@ class MainWindow(QMainWindow):
     def open_Force_PSD_window(self):
         if self.plot_windows is None:
             self.plot_windows = []
+        # TODO fix that A and B are mixed up here.
         self.plot_windows.append(PlotWindow(self.c_p, data=self.data_channels,
                                           x_keys=['PSD_A_F_X','PSD_B_F_X'], y_keys=['PSD_A_F_Y','PSD_B_F_Y'],
                                           aspect_locked=True, grid_on=True))

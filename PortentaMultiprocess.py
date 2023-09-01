@@ -1,3 +1,4 @@
+from multiprocessing import Process, Value, Array, Queue
 from PyQt6.QtWidgets import (
  QCheckBox, QVBoxLayout, QWidget, QLabel, QTableWidget, QTableWidgetItem
 )
@@ -12,6 +13,141 @@ from time import sleep, time
 import timeit
 
 
+"""
+Idea behind using a separate process is to have the process continously read the input data and then put that into shared arrays/dictionaries
+where a thread of the main process access and uses it. Basically the new process replaces the old serial connection and the old serial connection
+is read by the new process. Perhaps not the most elegant solution but it is one that requires relatively few changes to the code.
+
+"""
+class PortentaCommsProcess(Process):
+
+    def __init__(self, portenta_data, outdata, com_port, running):
+        """
+        This function should get the data it is to send to the minitweezers. As well as a boolean which
+        determines if the process should continue running.
+
+        Also takes the outdata which is a queue that the process can put data into. This data is then read by the main process.
+
+        portenta_data should be a queue while portenta_commands should be a shared array or pipe.
+        """
+
+        super().__init__()  # Initialize Process instead of Thread
+        #self.c_p = Manager().dict(c_p)  # Create a proxy object for the shared dictionary
+        #self.portenta_commands = portenta_commands # Uint8 array, shared with the main process
+        self.outdata = outdata
+        self.portenta_data = portenta_data
+        self.com_port = com_port
+        self.running = running
+        self.daemon  = True
+
+    def send_data_to_portenta(self):
+
+        if self.serial_channel is None:
+            try:
+                self.serial_channel = serial.Serial(self.com_port, baudrate=5000000, timeout=.001, write_timeout=0.001)
+                #self.c_p['minitweezers_connected'] = True
+                print("Reconnected")
+            except Exception as ex:
+                self.serial_channel = None
+            return
+
+        self.serial_channel.reset_output_buffer()
+
+        self.outdata[0:2] = [123, 123]
+
+        # Send the target position and speed
+        """
+        for i in range(3):
+            self.outdata[2 + i * 2] = self.c_p['minitweezers_target_pos'][i] >> 8
+            self.outdata[3 + i * 2] = self.c_p['minitweezers_target_pos'][i] & 0xFF
+            self.outdata[8 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) >> 8
+            self.outdata[9 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) & 0xFF
+
+        # Send the piezo voltages
+        for i in range(2):
+            self.outdata[14 + i * 2] = self.c_p['piezo_A'][i] >> 8
+            self.outdata[15 + i * 2] = self.c_p['piezo_A'][i] & 0xFF
+            self.outdata[18 + i * 2] = self.c_p['piezo_B'][i] >> 8
+            self.outdata[19 + i * 2] = self.c_p['piezo_B'][i] & 0xFF
+        #print(self.outdata[14:21]) Correct
+        self.outdata[22] = self.c_p['motor_travel_speed'][0] >> 8
+        self.outdata[23] = self.c_p['motor_travel_speed'][0] & 0xFF
+        self.outdata[24] = self.c_p['portenta_command_1']
+        self.c_p['portenta_command_1'] = 0
+        self.outdata[25] = self.c_p['portenta_command_2']
+        # End bytes for the portenta
+        self.outdata[26] = self.c_p['PSD_means'][0] >> 8
+        self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
+        self.outdata[28] = self.c_p['PSD_means'][1] >> 8
+        self.outdata[29] = self.c_p['PSD_means'][1] & 0xFF
+
+        self.outdata[30] = self.c_p['PSD_means'][2] >> 8
+        self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
+        self.outdata[32] = self.c_p['PSD_means'][3] >> 8
+        self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
+
+        self.outdata[34] = self.c_p['blue_led']
+
+        self.outdata[35:] = self.c_p['protocol_data']
+        """
+        try:
+            # TODO fix the error when writing outdata.
+            self.serial_channel.write(self.outdata)
+        except serial.serialutil.SerialTimeoutException as e:
+            pass
+        except serial.serialutil.SerialException as e:
+            print(f"Serial exception: {e}")
+            self.serial_channel = None
+            #self.c_p['minitweezers_connected'] = False
+        
+    def read_portenta(self):
+        """
+        Reads the data from the serial port and returns it as a numpy array.
+
+        """
+        chunk_length = 32 # Number of 16 bit numbers sent each time.
+        if self.serial_channel is None:
+            return None
+        try:
+            bytes_to_read = self.serial_channel.in_waiting
+            if bytes_to_read < chunk_length:
+                return None
+            raw_data = self.serial_channel.read(bytes_to_read)
+        except serial.serialutil.SerialException as e:
+            print(f"Serial exception: {e}")
+            self.serial_channel = None
+            #self.c_p['minitweezers_connected'] = False
+            return None
+        if raw_data[0] != 123 or raw_data[1] != 123:
+                print('Wrong start bytes')
+                return None
+
+        # Insted of returning we put it in a buffer
+        self.portenta_data.put_nowait(np.frombuffer(raw_data, dtype=np.uint16))
+        # TODO make this thread actually put the data into the data channels too. Would most likely solve
+        # any remaining issues with the program overloading during saving.
+
+
+    def run(self):
+        # Open the serial port in the child process
+        try:
+            self.serial_channel = serial.Serial(self.com_port, baudrate=5000000, timeout=.001, write_timeout=0.001)
+            #self.c_p['minitweezers_connected'] = True
+        except Exception as ex:
+            print("No comm port!")
+            self.serial_channel = None
+            print(ex)
+        print('Serial channel opened')
+
+        while self.running:
+            self.send_data_to_portenta()
+            self.read_portenta()
+            sleep(1e-4)
+
+        if self.serial_channel is not None:
+            self.serial_channel.close()
+            print('Serial connection to minitweezers closed')
+
 
 class PortentaComms(Thread):
 
@@ -19,6 +155,7 @@ class PortentaComms(Thread):
         Thread.__init__(self)
         self.setDaemon(True)
         self.c_p = c_p
+        """
         try:
             self.serial_channel = serial.Serial(self.c_p['COM_port'], baudrate=5000000, timeout=.001, write_timeout =0.001)
             self.c_p['minitweezers_connected'] = True
@@ -27,8 +164,11 @@ class PortentaComms(Thread):
             self.serial_channel = None
             print(ex)
         print('Serial channel opened')
+        """
+        self.portenta_data = Queue()
         self.data_channels = data_channels
-        self.outdata = np.uint8(np.zeros(48))
+        self.outdata = Array('i', np.uint8(np.zeros(48)))
+        self.running_process = Value('i', 1)
         self.indata = np.uint8(np.zeros(64))
         self.start_time = time()
         nbr_multisamples = 1
@@ -36,20 +176,13 @@ class PortentaComms(Thread):
         for _ in range(nbr_multisamples):
             self.channel_array.extend(self.c_p['multi_sample_channels'])
 
-    def send_data_fast(self):
-        """
-        Sends data to the portenta.
-        """
-        if self.serial_channel is None:
-            try:
-                self.serial_channel = serial.Serial(self.c_p['COM_port'], baudrate=5000000, timeout=.001, write_timeout=0.001)
-                self.c_p['minitweezers_connected'] = True
-                print("Reconnected")
-            except Exception as ex:
-                self.serial_channel = None
-            return
 
-        self.serial_channel.reset_output_buffer()
+
+
+    def prepare_portenta_commands(self):
+        """
+        Prepares data for sending to the portenta.
+        """
 
         # Start bytes for the portenta
         self.outdata[0:2] = [123, 123]
@@ -87,7 +220,7 @@ class PortentaComms(Thread):
         self.outdata[34] = self.c_p['blue_led']
 
         self.outdata[35:] = self.c_p['protocol_data']
-
+        """
         try:
             self.serial_channel.write(self.outdata)
         except serial.serialutil.SerialTimeoutException as e:
@@ -96,6 +229,7 @@ class PortentaComms(Thread):
             print(f"Serial exception: {e}")
             self.serial_channel = None
             self.c_p['minitweezers_connected'] = False
+        """
 
     def calc_quote_fast(self, quote, channel1, channel2, chunk_length):
         D1 = self.data_channels[channel1].get_data(chunk_length)
@@ -114,28 +248,19 @@ class PortentaComms(Thread):
 
     def read_data(self):
         """
-        Reads the data from the serial port and returns it as a numpy array.
+        Replace this to read from the CommsProcess instead of the serial channel.
 
         """
-        chunk_length = 32 # Number of 16 bit numbers sent each time.
-        if self.serial_channel is None:
+        if self.portenta_data.empty():
             return None
-        try:
-            bytes_to_read = self.serial_channel.in_waiting
-            if bytes_to_read < chunk_length:
-                return None
-            raw_data = self.serial_channel.read(bytes_to_read)
-        except serial.serialutil.SerialException as e:
-            print(f"Serial exception: {e}")
-            self.serial_channel = None
-            self.c_p['minitweezers_connected'] = False
-            return None
-        if raw_data[0] != 123 or raw_data[1] != 123:
-                print('Wrong start bytes')
-                return None
-        return np.frombuffer(raw_data, dtype=np.uint16) # Immediately does the correct conversion
+        data = []
+        while not self.portenta_data.empty():
+            data.append(self.portenta_data.get_nowait())
+        return np.concatenate(data)
 
-    def read_data_to_channels_experimental(self, chunk_length=256):
+    def read_data_to_channels(self, chunk_length=256):
+        # Chunk length is the number of 16 bit numbers sent each time, i.e half the number of bytes sent.
+        # TODO there are two different chunk_lenghts in this script in different places, they mean slightly different things, fix this.
         numbers = self.read_data()
         if numbers is None:
             sleep(0.001)
@@ -176,12 +301,9 @@ class PortentaComms(Thread):
         low = self.data_channels['Time_micros_low'].get_data(data_length).astype(np.uint32)
         high = self.data_channels['Time_micros_high'].get_data(data_length).astype(np.uint32)
         T_time = (high << 16) | low
-        self.data_channels['T_time'].put_data(T_time)#((high << 16) | low)
-        # Use the first of the time samples of the PSD is roughyl equivalent to the motor time
-        #TODO: This does not appear to be working correctly!
-        # Error appears to have been that the last index of the data is not retrieved correctly. I.e
-        #self.data_channels['Motor time'].put_data(self.data_channels['T_time'].get_data_spaced(nbr_chunks,14)) # 14 data points per chunk
+        self.data_channels['T_time'].put_data(T_time)
         self.data_channels['Motor time'].put_data(T_time[::14]) # 14 data points per chunk
+        
         self.calculate_quotes_fast(data_length) # This works but is a bit slow...
 
     def move_to_location(self):
@@ -226,14 +348,19 @@ class PortentaComms(Thread):
 
 
     def run(self):
+        #if __name__ == "__main__":
+        print("Starting portenta comms process")
+
+        self.commsProcess = PortentaCommsProcess(self.portenta_data, self.outdata, self.c_p['COM_port'], self.running_process)
+        self.commsProcess.start()
+        print("Portenta comms process started")
 
         while self.c_p['program_running']:
             if self.c_p['move_to_location']:
                 self.move_to_location()
-            self.send_data_fast()
-            self.read_data_to_channels_experimental()
-            sleep(1e-4)
-
-        if self.serial_channel is not None:
-            self.serial_channel.close()
-            print('Serial connection to minitweezers closed')
+            self.prepare_portenta_commands()
+            self.read_data_to_channels()
+            sleep(1e-3)
+        print("Setting running process to 0")
+        self.running_process = 0
+        self.commsProcess.join()

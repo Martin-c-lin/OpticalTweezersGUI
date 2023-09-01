@@ -18,7 +18,7 @@ class CurrentValueWindow(QWidget):
         super().__init__()
         self.c_p = c_p
         self.data_channels = data_channels
-        self.setWindowTitle("Data channels current values")
+        self.setWindowTitle("Data channels viewer")
         self.resize(800, 800)
 
         self.vBox = QVBoxLayout()

@@ -35,13 +35,15 @@ class MotorControllerWindow(QWidget):
         layout = QVBoxLayout()
         self.motor_speed = 4 # TODO replace this with a motor speed in c_p
         self.y_movement = 0
-        
-        self.label = QLabel("Motor controller")
+        self.setWindowTitle("Motor controller")
+
+        self.label = QLabel("Set motor speed (0-32767) a.u")
         layout.addWidget(self.label)
 
         self.SpeedLineEdit = QLineEdit()
         self.SpeedLineEdit.setValidator(QIntValidator(0,32767))
         self.SpeedLineEdit.setText(str(self.motor_speed))
+        self.SpeedLineEdit.setToolTip("Sets the motor speed. Units are arbitrary and do not apply to movement with the mouse.")
         self.SpeedLineEdit.textChanged.connect(self.set_motor_speed)
         layout.addWidget(self.SpeedLineEdit) 
         
@@ -49,6 +51,7 @@ class MotorControllerWindow(QWidget):
         self.up_button = QPushButton('LEFT')
         self.up_button.pressed.connect(self.move_up)
         self.up_button.released.connect(self.stop_y)
+        self.up_button.setToolTip("Moves left in the sample. Also accessible via the left arrow key.")
         self.up_button.setCheckable(False)
         self.up_button.setShortcut("left")
         layout.addWidget(self.up_button)
@@ -56,6 +59,7 @@ class MotorControllerWindow(QWidget):
         self.down_button = QPushButton('RIGHT')
         self.down_button.pressed.connect(self.move_down)
         self.down_button.released.connect(self.stop_y)
+        self.down_button.setToolTip("Moves right in the sample. Also accessible via the right arrow key.")
         self.down_button.setCheckable(False)
         self.down_button.setShortcut("right")
         layout.addWidget(self.down_button)
@@ -64,6 +68,7 @@ class MotorControllerWindow(QWidget):
         self.right_button = QPushButton('UP')
         self.right_button.pressed.connect(self.move_right)
         self.right_button.released.connect(self.stop_x)
+        self.right_button.setToolTip("Moves up in the sample. Also accessible via the up arrow key.")   
         self.right_button.setShortcut("up")
         self.right_button.setCheckable(False)
         layout.addWidget(self.right_button)
@@ -71,6 +76,7 @@ class MotorControllerWindow(QWidget):
         self.left_button = QPushButton('DOWN')
         self.left_button.pressed.connect(self.move_left)
         self.left_button.setShortcut("down")
+        self.left_button.setToolTip("Moves down in the sample. Also accessible via the down arrow key.")
         self.left_button.released.connect(self.stop_x)
         self.left_button.setCheckable(False)
         layout.addWidget(self.left_button)
@@ -79,11 +85,13 @@ class MotorControllerWindow(QWidget):
         self.objective_forward_button.pressed.connect(self.objective_forward)
         self.objective_forward_button.released.connect(self.objective_stop)
         self.objective_forward_button.setShortcut("pgup")
+        self.objective_forward_button.setToolTip("Moves the sample forwards towards the imaging objective. Also accessible via the page up key.")
         self.objective_forward_button.setCheckable(False)
         layout.addWidget(self.objective_forward_button)
 
         self.objective_backward_button = QPushButton('Sample backward')
         self.objective_backward_button.pressed.connect(self.objective_backward)
+        self.objective_backward_button.setToolTip("Moves the sample backwards towards the imaging objective. Also accessible via the page down key.")
         self.objective_backward_button.released.connect(self.objective_stop)
         self.objective_backward_button.setShortcut("pgdown")
         self.objective_backward_button.setCheckable(False)
@@ -99,7 +107,7 @@ class MotorControllerWindow(QWidget):
                 height: 30px;
             }
             """)
-        led_label = QLabel("LED ON/OFF")
+        led_label = QLabel("Sample LED ON/OFF")
         layout.addWidget(led_label) 
         layout.addWidget(self.led_button)
         self.setLayout(layout)

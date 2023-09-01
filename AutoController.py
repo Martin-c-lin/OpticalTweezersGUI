@@ -240,7 +240,7 @@ class SelectLaserPosition(MouseInterface):
         return "Click on the screen where the laser is located"
 
 class autoControllerThread(Thread):
-    def __init__(self, c_p, data_channels, main_window=None):
+    def __init__(self, c_p, data_channels, main_window=None  ):
         super().__init__()
         self.c_p = c_p
         self.setDaemon(True)

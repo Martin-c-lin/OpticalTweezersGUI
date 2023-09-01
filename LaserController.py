@@ -36,6 +36,7 @@ class LaserControllerWidget(QWidget):
         super().__init__()
         self.c_p = c_p
         self.OT_GUI = OT_GUI
+        self.setWindowTitle("Laser controller")
         
         self.current_A_edit_val = self.c_p['laser_A_current']
         self.current_B_edit_val = self.c_p['laser_B_current']
@@ -60,6 +61,7 @@ class LaserControllerWidget(QWidget):
         self.experiment_idx = 0
         self.experiment_running = False
         self.experiment_started = False
+        self.snapshot_taken = False
         self.time_interval = 5
 
 
@@ -86,7 +88,8 @@ class LaserControllerWidget(QWidget):
             print("Warning recording was already on, turning off")
             time.sleep(0.05)
         self.OT_GUI.ToggleRecording()
-        self.OT_GUI.snapshot()
+        self.snapshot_taken = False
+        # self.OT_GUI.snapshot()
 
     def stop_data_recording(self):
         self.OT_GUI.stop_saving()
@@ -125,7 +128,13 @@ class LaserControllerWidget(QWidget):
             self.start_data_recording()
             
         if self.c_p['program_running'] and self.experiment_running:
-            dt = time()-self.current_power_start_time 
+            dt = time()-self.current_power_start_time
+
+            # In the middle of the experiment, take a snapshot
+            if dt > self.time_interval/2 and not self.snapshot_taken: 
+                self.OT_GUI.snapshot()
+                self.snapshot_taken = True
+
             if dt > self.time_interval:
                 print(f"Stopped recording data{dt}\n {self.experiment_idx}")
                 self.stop_data_recording()

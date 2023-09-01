@@ -27,3 +27,5 @@ and requires python version 3.8 or earlier. Install with "pip install pythonnet=
 Cupy is usefull, installed it with the following command.
 conda install -c conda-forge cupy cudatoolkit=11.3
 # Make sure to check which cuda version you have before installing!
+
+# run this command to install ffmpeg properly : "conda install ffmpeg -c mrinaljain17"

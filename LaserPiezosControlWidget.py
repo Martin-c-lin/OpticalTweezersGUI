@@ -22,68 +22,61 @@ class LaserPiezoWidget(QWidget):
         super().__init__()
         self.c_p = c_p
         self.data_channels = data_channels
-        
+        self.setWindowTitle("Piezo wiggler Controller")
         layout = QVBoxLayout()
         self.label = QLabel("Piezo A x")
         layout.addWidget(self.label)
 
+        # Create the slider for the piezo A x-axis
         self.piezo_Ax_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.piezo_Ax_slider.setGeometry(50,50, 200, 50)
         self.piezo_Ax_slider.setMinimum(0)
-        #self.piezo_Ax_slider.setValue(self.c_p['piezo_A'][0])
         self.piezo_Ax_slider.setMaximum(65535)
         self.piezo_Ax_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.piezo_Ax_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.piezo_Ax_slider.setTickInterval(1)
-        
         self.piezo_Ax_slider.valueChanged[int].connect(self.set_piezo_Ax_value) 
 
         layout.addWidget(self.piezo_Ax_slider)
         
         self.label_AY = QLabel("Piezo A y")
         layout.addWidget(self.label_AY)
-
+        # Create the slider for the piezo A y-axis
         self.piezo_Ay_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.piezo_Ay_slider.setGeometry(50,50, 200, 50)
         self.piezo_Ay_slider.setMinimum(0)
-        #self.piezo_Ay_slider.setValue(self.c_p['piezo_A'][1])
         self.piezo_Ay_slider.setMaximum(65535)
         self.piezo_Ay_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.piezo_Ay_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.piezo_Ay_slider.setTickInterval(1)
-        
         self.piezo_Ay_slider.valueChanged[int].connect(self.set_piezo_Ay_value) 
 
         layout.addWidget(self.piezo_Ay_slider)
 
         self.label_BX = QLabel("Piezo B x")
         layout.addWidget(self.label_BX)
-
+        # Create the slider for the piezo B x-axis
         self.piezo_Bx_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.piezo_Bx_slider.setGeometry(50,50, 200, 50)
         self.piezo_Bx_slider.setMinimum(0)
-        #self.piezo_Bx_slider.setValue(self.c_p['piezo_B'][0])
         self.piezo_Bx_slider.setMaximum(65535)
         self.piezo_Bx_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.piezo_Bx_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.piezo_Bx_slider.setTickInterval(1)
-        
         self.piezo_Bx_slider.valueChanged[int].connect(self.set_piezo_Bx_value) 
 
         layout.addWidget(self.piezo_Bx_slider)
         
         self.label_BY = QLabel("Piezo B y")
         layout.addWidget(self.label_BY)
-
+        # Create the slider for the piezo B y-axis
         self.piezo_By_slider = QSlider(Qt.Orientation.Horizontal, self)
         self.piezo_By_slider.setGeometry(50,50, 200, 50)
         self.piezo_By_slider.setMinimum(0)
-        #self.piezo_By_slider.setValue(self.c_p['piezo_B'][1])
         self.piezo_By_slider.setMaximum(65535)
         self.piezo_By_slider.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self.piezo_By_slider.setTickPosition(QSlider.TickPosition.TicksBelow)
         self.piezo_By_slider.setTickInterval(1)
-        
         self.piezo_By_slider.valueChanged[int].connect(self.set_piezo_By_value) 
 
         layout.addWidget(self.piezo_By_slider)
@@ -93,14 +86,20 @@ class LaserPiezoWidget(QWidget):
         self.autoalign_A.stateChanged.connect(self.toggle_autoalign_A)
         layout.addWidget(self.autoalign_A)
 
+        self.autoalign_B = QCheckBox("Autoalign B")
+        self.autoalign_B.setChecked(self.c_p['portenta_command_2']==2)
+        self.autoalign_B.stateChanged.connect(self.toggle_autoalign_B)
+        layout.addWidget(self.autoalign_B)
+
         self.center_piezos_button = QPushButton("Center Piezos")
         self.center_piezos_button.clicked.connect(self.center_piezos)
         self.center_piezos_button.setCheckable(False)
         layout.addWidget(self.center_piezos_button)
 
-
         self.set_slider_values()
         self.setLayout(layout)
+        # TODO make this widget update itself when the piezos are moved by a separate function such as the
+        #  pulling protocol. Also make it possible to autoalign both A and B at the same time.
 
     def set_slider_values(self):
         self.piezo_Ax_slider.setValue(self.c_p['piezo_A'][0])
@@ -126,9 +125,10 @@ class LaserPiezoWidget(QWidget):
         self.c_p['piezo_B'][1] = int(self.piezo_By_slider.value())
 
     def toggle_autoalign_A(self):
-        if self.c_p['portenta_command_2'] == 0:
+        if self.c_p['portenta_command_2'] == 0 or self.c_p['portenta_command_2'] == 2:
             self.c_p['portenta_command_2'] = 1
             print('toggling autoalign of trap A')
+            self.autoalign_B.setChecked(False)   
         else:
             self.c_p['piezo_A'] = np.int32([self.data_channels['dac_ax'].get_data_spaced(1)[0],
                                             self.data_channels['dac_ay'].get_data_spaced(1)[0]])
@@ -139,6 +139,22 @@ class LaserPiezoWidget(QWidget):
             self.set_slider_values()
 
             print('Disabling autoalign of trap A')
+
+    def toggle_autoalign_B(self):
+        if self.c_p['portenta_command_2'] == 0 or self.c_p['portenta_command_2'] == 1:
+            self.c_p['portenta_command_2'] = 2
+            self.autoalign_A.setChecked(False)
+            print('toggling autoalign of trap B')
+        else:
+            self.c_p['piezo_A'] = np.int32([self.data_channels['dac_ax'].get_data_spaced(1)[0],
+                                            self.data_channels['dac_ay'].get_data_spaced(1)[0]])
+            self.c_p['piezo_B'] = np.int32([self.data_channels['dac_bx'].get_data_spaced(1)[0],
+                                            self.data_channels['dac_by'].get_data_spaced(1)[0]])
+            self.c_p['portenta_command_2'] = 0
+
+            self.set_slider_values()
+
+            print('Disabling autoalign of trap B')
 
 
     
