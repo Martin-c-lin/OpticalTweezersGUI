@@ -1,11 +1,11 @@
 from multiprocessing import Process, Value, Array, Queue
-from PyQt6.QtWidgets import (
- QCheckBox, QVBoxLayout, QWidget, QLabel, QTableWidget, QTableWidgetItem
-)
+#from PyQt6.QtWidgets import (
+# QCheckBox, QVBoxLayout, QWidget, QLabel, QTableWidget, QTableWidgetItem
+#)
 
 # from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QAction
-from PyQt6.QtCore import QTimer
+# from PyQt6.QtGui import QAction
+# from PyQt6.QtCore import QTimer
 from threading import Thread
 import numpy as np
 import serial
@@ -123,6 +123,7 @@ class PortentaCommsProcess(Process):
                 return None
 
         # Insted of returning we put it in a buffer
+        # print(f"Raw data len{len(raw_data)}") # Data gets this far
         self.portenta_data.put_nowait(np.frombuffer(raw_data, dtype=np.uint16))
         # TODO make this thread actually put the data into the data channels too. Would most likely solve
         # any remaining issues with the program overloading during saving.
@@ -231,20 +232,28 @@ class PortentaComms(Thread):
             self.c_p['minitweezers_connected'] = False
         """
 
-    def calc_quote_fast(self, quote, channel1, channel2, chunk_length):
+    def calc_quote_fast(self, quote, channel1, channel2, chunk_length, scale=1):
         D1 = self.data_channels[channel1].get_data(chunk_length)
         D2 = np.copy(self.data_channels[channel2].get_data(chunk_length).astype(float))
         D2[D2==0] = np.inf
-        self.data_channels[quote].put_data(D1/D2)
+        self.data_channels[quote].put_data(scale*D1/D2)
 
     def calculate_quotes_fast(self, chunk_length):
         # TODO suspect that this is too slow and maybe will make things go bonkers slow.
-        self.calc_quote_fast('F_A_X','PSD_A_F_X','PSD_A_F_sum', chunk_length)
-        self.calc_quote_fast('F_A_Y','PSD_A_F_Y','PSD_A_F_sum', chunk_length)
-        self.calc_quote_fast('F_B_X','PSD_B_F_X','PSD_B_F_sum', chunk_length)
-        self.calc_quote_fast('F_B_Y','PSD_B_F_Y','PSD_B_F_sum', chunk_length)
+        self.calc_quote_fast('Position_A_X','PSD_P_F_X','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_A_Y','PSD_P_F_Y','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_B_X','PSD_P_F_X','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
+        self.calc_quote_fast('Position_B_Y','PSD_P_F_Y','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
         self.calc_quote_fast('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum', chunk_length)
         self.calc_quote_fast('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum', chunk_length)
+
+        # Calculate force and put in data channels
+        self.data_channels['F_A_X'].put_data(self.data_channels['PSD_A_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][0])
+        self.data_channels['F_A_Y'].put_data(self.data_channels['PSD_A_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][0])
+        self.data_channels['F_B_X'].put_data(self.data_channels['PSD_B_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][1])
+        self.data_channels['F_B_Y'].put_data(self.data_channels['PSD_B_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][1])
+        
+
 
     def read_data(self):
         """
@@ -256,6 +265,7 @@ class PortentaComms(Thread):
         data = []
         while not self.portenta_data.empty():
             data.append(self.portenta_data.get_nowait())
+
         return np.concatenate(data)
 
     def read_data_to_channels(self, chunk_length=256):

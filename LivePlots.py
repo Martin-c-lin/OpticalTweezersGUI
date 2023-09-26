@@ -265,7 +265,7 @@ class PlotWindow(QMainWindow):
         self.x = list(range(100))  # 100 time points
         self.y = [randint(0, 100) for _ in range(100)]  # 100 data points. todo remove if not really needed
         self.y2 = [randint(0, 100) for _ in range(100)]  # 100 data points
-        self.default_plot_length = 500
+        self.default_plot_length = 50_000
         self.color_idx = 0 # to keep track of which color to use next
         self.circle = None
         self.aspect_locked = aspect_locked
@@ -287,7 +287,7 @@ class PlotWindow(QMainWindow):
             }
 
         self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
-        self.plot_data['sub_sample'] = 10*np.ones(len(x_keys), int) # Changed subsampling here 
+        self.plot_data['sub_sample'] = 100*np.ones(len(x_keys), int) # Changed subsampling here 
         self.plot_data['pen'] = [pg.mkPen(color=Colors['red']) for _ in x_keys]
         self.data_lines = []
         # TODO,have better default plots.
@@ -308,7 +308,7 @@ class PlotWindow(QMainWindow):
         self.add_plot_action = QAction("Add plot", self)
         self.add_plot_action.setToolTip("Adds another plot to the window")
         add_p = partial(self.add_plot, 'T_time', 'PSD_A_F_X')
-        self.add_plot_action.triggered.connect(add_p)# self.add_plot)
+        self.add_plot_action.triggered.connect(add_p)
         self.add_plot_action.setCheckable(False)
 
         self.add_circle_action = QAction("Add circle", self)
@@ -353,7 +353,7 @@ class PlotWindow(QMainWindow):
         if self.circle is None:
             radius=100.0
             center=[0,0]
-            self._t = np.linspace(0,2*np.pi,100)
+            self._t = np.linspace(0,2*np.pi, 100)
             self.x_c = (radius * np.cos(self._t)) + center[0]
             self.y_c = (radius * np.sin(self._t)) + center[1]
             pen = pg.mkPen(color=Colors['white'])
@@ -555,6 +555,12 @@ class PlotWindow(QMainWindow):
                     print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
                     print('Plotting error:', e)
 
+    def real_time_averaging(self, x, y, avg_len):
+        """
+        Uses
+        """
+        pass
+
     def toggle_live_plotting(self):
         self.plot_running = not self.plot_running
         if self.plot_running:
@@ -576,8 +582,6 @@ class PlotWindow(QMainWindow):
         pen = pg.mkPen(color=color)
         line = self.data_lines[idx]
         line.setPen(pen)
-        # line.setSymbolPen(pen)
-        # line.setSymbolBrush(color) # Can be used to set the symbol color
 
         if idx == len(self.plot_data['pen']):
             self.plot_data['pen'].append(pen)
@@ -591,12 +595,15 @@ class PlotWindow(QMainWindow):
         self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
                                                      pen=self.plot_data['pen'][idx])
         
+        self.set_axis_labels()
+        
     def set_y_data(self, idx, y_data):
         self.plot_data['y'][idx] = y_data
         plot_name = f" {self.plot_data['x'][idx]} vs {y_data}"
         self.graphWidget.removeItem(self.data_lines[idx])
         self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
                                                      pen=self.plot_data['pen'][idx])
+        self.set_axis_labels()
 
     def __del__(self):
         for widget in self.sub_widgets:

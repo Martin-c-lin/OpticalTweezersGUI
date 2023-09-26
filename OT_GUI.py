@@ -24,29 +24,30 @@ from random import randint
 import numpy as np
 from time import sleep
 from functools import partial
-
-
+# TODO remove the things that are not used for the minitweezers such as the thorlabs motors!
 import BaslerCameras
 import ThorlabsCameras
 from CameraControlsNew import CameraThread, VideoWriterThread, CameraClicks
 from ControlParameters import default_c_p, get_data_dicitonary_new
 from TemperatureControllerTED4015 import TemperatureThread
 from TemperatureControllerWidget import TempereatureControllerWindow
-from ReadPicUart import PicReader, PicWriter
+#from ReadPicUart import PicReader, PicWriter
 from LivePlots import PlotWindow
 from SaveDataWidget import SaveDataWindow
-from PIStage import PIStageThread
-from PIStageWidget import PIStageWidget
+# from PIStage import PIStageThread
+# from PIStageWidget import PIStageWidget
 import MotorControlWidget
+from QWidgetDockContainer import QWidgetWindowDocker
 from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
-from DeepLearningThread import MouseAreaSelect, DeepLearningAnalyserLDS, DeepLearningControlWidget
+from CameraMeasurementTool import CameraMeasurements
+from DeepLearningThread import DeepLearningAnalyserLDS, DeepLearningControlWidget
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
 from ReadArduinoPortenta import PortentaComms
 # from PortentaMultiprocess import PortentaComms
 
 from PullingProtocolWidget import PullingProtocolWidget
-from StepperObjective import ObjectiveStepperController
+from StepperObjective import ObjectiveStepperController, ObjectiveStepperControllerToolbar
 import AutoController
 import LaserController
 
@@ -124,12 +125,13 @@ class Worker(QThread):
         # Check if offset and gain should be applied.
         if self.c_p['image_offset'] != 0:
             self.image += int(self.c_p['image_offset'])
+            self.image = np.uint8(self.image)
             
         if self.c_p['image_gain'] != 1:
             # TODO unacceptably slow
-            self.image = (self.image*self.c_p['image_gain'])
+            self.image = np.uint8((self.image*self.c_p['image_gain']))
 
-        self.image = np.uint8(self.image)
+        #self.image = np.uint8(self.image)
 
     def draw_central_circle(self):
         self.blue_pen.setColor(QColor('blue'))
@@ -309,6 +311,30 @@ class MainWindow(QMainWindow):
         self.create_filemenu()
         self.drop_down_window_menu()
         self.action_menu()
+        self.ObjectiveStepperControlltoolbar= ObjectiveStepperControllerToolbar(self.c_p,self.ArduinoUnoSerial,self)
+        self.addToolBar(Qt.ToolBarArea.RightToolBarArea, self.ObjectiveStepperControlltoolbar)
+
+        # self.MotorControllerToolbar = MotorControlWidget.MotorControllerToolbar(self.c_p)
+        # self.addToolBar(Qt.ToolBarArea.LeftToolBarArea, self.MotorControllerToolbar)
+        
+        # Creating UI elements to be used in the main window
+        self.motorWidget = MotorControlWidget.MotorControllerWindow(self.c_p)
+        self.MotorControlDock = QWidgetWindowDocker(self.motorWidget, "Motor controls")
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.MotorControlDock)
+        
+        self.LaserPiezoWidget = LaserPiezoWidget(self.c_p, self.data_channels)
+        self.laserPiezoDock = QWidgetWindowDocker(self.LaserPiezoWidget, "Wiggler controls")
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.laserPiezoDock)
+
+        self.laserControllerWidget = LaserController.LaserControllerWidget(self.c_p, self)
+        self.LaserControllerDock = QWidgetWindowDocker(self.laserControllerWidget, "Laser controls")
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.LaserControllerDock)
+
+        self.pullingProtolWidget = PullingProtocolWidget(self.c_p, self)
+        self.pullingProtocolDock = QWidgetWindowDocker(self.pullingProtolWidget, "Pulling protocol")
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.pullingProtocolDock)
+
+        
         self.show()
 
     @pyqtSlot(QImage)
@@ -326,6 +352,7 @@ class MainWindow(QMainWindow):
         self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
         #self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['click_tools'].append(AutoController.SelectLaserPosition(self.c_p))
+        self.c_p['click_tools'].append(CameraMeasurements(self.c_p))
 
         self.c_p['mouse_params'][5] = 0
 
@@ -423,10 +450,9 @@ class MainWindow(QMainWindow):
             self.toggle_data_record_action.setText("Stop recording data")
 
     def start_saving(self):
-        # TODO make continous saving possible to avoid unneccesary saving
+
         self.start_idx = self.data_channels['PSD_A_P_X'].index
         self.start_idx_motors = self.data_channels['Motor_x_pos'].index # Fewer data points for motors
-        # TODO fix problem with the motor channels having fewer data points.
         self.saving = True
         self.data_idx += 1
         print("Saving started")
@@ -439,11 +465,20 @@ class MainWindow(QMainWindow):
         sleep(0.1) # Waiting for all channels to reach this point
         data = {}
         for channel in self.data_channels:
+            # TODO too many ifs and elses to make the code nice
             if self.data_channels[channel].saving_toggled:
                 if channel in self.c_p['multi_sample_channels']:
-                    data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
+                    if self.start_idx < self.stop_idx:
+                        data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
+                    else:
+                        data[channel] = np.concatenate([self.data_channels[channel].data[self.start_idx:],
+                                                        self.data_channels[channel].data[:self.stop_idx]])
                 else:
-                    data[channel] = self.data_channels[channel].data[self.start_idx_motors:self.stop_idx_motors]
+                    if self.start_idx_motors < self.stop_idx_motors:
+                        data[channel] = self.data_channels[channel].data[self.start_idx_motors:self.stop_idx_motors]
+                    else:
+                        data[channel] = np.concatenate([self.data_channels[channel].data[self.start_idx_motors:],
+                                                        self.data_channels[channel].data[:self.stop_idx_motors]])
 
         filename = self.c_p['recording_path'] + '/' + self.c_p['filename'] + str(self.data_idx)
         with open(filename, 'wb') as f:
@@ -492,6 +527,15 @@ class MainWindow(QMainWindow):
         
         # Todo add option to remove positions, set shortcut, move position etc.
         # self.remove_positions_submenu = action_menu.addMenu("Remove saved positions")
+        def toggle_central_circle():
+            self.c_p['central_circle_on'] = not self.c_p['central_circle_on']
+
+        self.central_circle_button = QAction("Toggle center circle", self)
+        self.central_circle_button.setStatusTip("Turns on/off the central circle used for alignment")
+        self.central_circle_button.setCheckable(True)
+        self.central_circle_button.setChecked(self.c_p['central_circle_on'])
+        self.central_circle_button.triggered.connect(toggle_central_circle)
+        action_menu.addAction(self.central_circle_button)
 
     def zero_force_PSDs(self):
         self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_X'].get_data_spaced(1000)))
@@ -654,10 +698,7 @@ class MainWindow(QMainWindow):
     def openPlanktonViwer(self):
         self.planktonView = PlanktonViewer(self.c_p)
 
-    def open_laser_window(self):
-        # TODO make it impossible to open more than one of these windows
-        self.laser_window = LaserController.LaserControllerWidget(self.c_p, self)
-        self.laser_window.show()
+
 
     def open_channels_winoow(self):
         self.channelView = CurrentValueWindow(self.c_p, self.data_channels)
@@ -667,16 +708,33 @@ class MainWindow(QMainWindow):
         self.c_p['video_format'] = video_format
 
     def open_motor_control_window(self):
-        self.MCW = MotorControlWidget.MotorControllerWindow(self.c_p)
-        self.MCW.show()
+        #TODO all these methods are really basically the same, factor them out into a single one
+        self.MotorControlDock.show()
+        if self.MotorControlDock.isFloating():
+            self.MotorControlDock.setFloating(False)
 
+    def open_laser_window(self):
+        # TODO make it impossible to open more than one of these windows
+        #self.laser_window = LaserController.LaserControllerWidget(self.c_p, self)
+        #self.laser_window.show()
+
+        self.LaserControllerDock.show()
+        if self.LaserControllerDock.isFloating():
+            self.LaserControllerDock.setFloating(False)
     def open_stepper_objective(self):
-        self.obective_controller = ObjectiveStepperController(self.c_p, self.ArduinoUnoSerial)
-        self.obective_controller.show()
+        #self.obective_controller = ObjectiveStepperController(self.c_p, self.ArduinoUnoSerial)
+        #self.obective_controller.show()
+        pass
 
     def openPullingProtocolWindow(self):
-        self.pulling_protocol_window = PullingProtocolWidget(self.c_p, self.data_channels)
-        self.pulling_protocol_window.show()
+        self.pullingProtocolDock.show()
+        if self.pullingProtocolDock.isFloating():
+            self.pullingProtocolDock.setFloating(False)
+
+    def OpenLaserPiezoWidget(self):
+        self.laserPiezoDock.show()
+        if self.laserPiezoDock.isFloating():
+            self.laserPiezoDock.setFloating(False)
 
     def open_thorlabs_motor_control_window(self):
         self.MCW_T = MotorControlWidget.ThorlabsMotorWindow(self.c_p)
@@ -737,15 +795,19 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        H = event.size().height()
-        W = event.size().width()
-        self.c_p['frame_size'] = W, H
+        self.resize_image()
+
+    def resize_image(self):
+        # New code for it
+        current_size = self.label.size()
+        width = current_size.width()
+        height = current_size.height()
+        self.c_p['frame_size'] = width, height
 
     def mouseMoveEvent(self, e):
         self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseMove()
-
 
     def mousePressEvent(self, e):
         
@@ -761,7 +823,6 @@ class MainWindow(QMainWindow):
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mousePress()
 
     def mouseReleaseEvent(self, e):
-
 
         self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
         self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
@@ -822,9 +883,7 @@ class MainWindow(QMainWindow):
         self.dep_learning_window = DeepLearningControlWidget(self.c_p)
         self.dep_learning_window.show()
 
-    def OpenLaserPiezoWidget(self):
-        self.laser_piezo_window = LaserPiezoWidget(self.c_p, self.data_channels)
-        self.laser_piezo_window.show()
+
 
     def closeEvent(self, event):
         # TODO close also other widgets here
@@ -918,10 +977,13 @@ def create_camera_toolbar_external(main_window):
     main_window.camera_toolbar.addAction(main_window.set_gain_action)
 
     main_window.toggle_data_record_action = QAction("Start saving data", main_window)
-    main_window.toggle_data_record_action.setToolTip("Turn ON recodording of data.\n Data will be saved to fileneame set in files windows.")
+    main_window.toggle_data_record_action.setToolTip(f"Turn ON recodording of data.\nData will be saved to fileneame set in files windows.\n Can save a maximum of {main_window.data_channels['T_time'].max_len} data points before overwriting old ones.")
     main_window.toggle_data_record_action.setCheckable(True)
     main_window.toggle_data_record_action.triggered.connect(main_window.record_data)
     main_window.camera_toolbar.addAction(main_window.toggle_data_record_action)
+
+
+
 
 
 if __name__ == '__main__':

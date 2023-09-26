@@ -23,7 +23,139 @@ from CustomMouseTools import MouseInterface
 from time import time, sleep
 
 
-# Maybe have this as a QThread?
+class MotorControllerToolbar(QToolBar):
+    """
+    Widget for controlling the motors of the minitweezers setup. Allows for changing the 
+    speed of the motors and moving them in the x and y direction.
+    """
+    def __init__(self, c_p):
+        super().__init__()
+        self.c_p = c_p
+        #layout = QVBoxLayout()
+        self.motor_speed = 4 # TODO replace this with a motor speed in c_p
+        self.y_movement = 0
+        self.setWindowTitle("Motor controller")
+
+        self.label = QLabel("Set motor speed (0-32767) a.u")
+        self.addWidget(self.label)
+
+        self.SpeedLineEdit = QLineEdit()
+        self.SpeedLineEdit.setValidator(QIntValidator(0,32767))
+        self.SpeedLineEdit.setText(str(self.motor_speed))
+        self.SpeedLineEdit.setToolTip("Sets the motor speed. Units are arbitrary and do not apply to movement with the mouse.")
+        self.SpeedLineEdit.textChanged.connect(self.set_motor_speed)
+        self.addWidget(self.SpeedLineEdit) 
+        
+        # TODO fix naming of functions/buttons confusing even if okay in GUI
+        self.up_button = QPushButton('LEFT')
+        self.up_button.pressed.connect(self.move_up)
+        self.up_button.released.connect(self.stop_y)
+        self.up_button.setToolTip("Moves left in the sample. Also accessible via the left arrow key.")
+        self.up_button.setCheckable(False)
+        self.up_button.setShortcut("left")
+        self.addWidget(self.up_button)
+
+        self.down_button = QPushButton('RIGHT')
+        self.down_button.pressed.connect(self.move_down)
+        self.down_button.released.connect(self.stop_y)
+        self.down_button.setToolTip("Moves right in the sample. Also accessible via the right arrow key.")
+        self.down_button.setCheckable(False)
+        self.down_button.setShortcut("right")
+        self.addWidget(self.down_button)
+
+
+        self.right_button = QPushButton('UP')
+        self.right_button.pressed.connect(self.move_right)
+        self.right_button.released.connect(self.stop_x)
+        self.right_button.setToolTip("Moves up in the sample. Also accessible via the up arrow key.")   
+        self.right_button.setShortcut("up")
+        self.right_button.setCheckable(False)
+        self.addWidget(self.right_button)
+
+        self.left_button = QPushButton('DOWN')
+        self.left_button.pressed.connect(self.move_left)
+        self.left_button.setShortcut("down")
+        self.left_button.setToolTip("Moves down in the sample. Also accessible via the down arrow key.")
+        self.left_button.released.connect(self.stop_x)
+        self.left_button.setCheckable(False)
+        self.addWidget(self.left_button)
+
+        self.objective_forward_button = QPushButton('Sample forward')
+        self.objective_forward_button.pressed.connect(self.objective_forward)
+        self.objective_forward_button.released.connect(self.objective_stop)
+        self.objective_forward_button.setShortcut("pgup")
+        self.objective_forward_button.setToolTip("Moves the sample forwards towards the imaging objective. Also accessible via the page up key.")
+        self.objective_forward_button.setCheckable(False)
+        self.addWidget(self.objective_forward_button)
+
+        self.objective_backward_button = QPushButton('Sample backward')
+        self.objective_backward_button.pressed.connect(self.objective_backward)
+        self.objective_backward_button.setToolTip("Moves the sample backwards towards the imaging objective. Also accessible via the page down key.")
+        self.objective_backward_button.released.connect(self.objective_stop)
+        self.objective_backward_button.setShortcut("pgdown")
+        self.objective_backward_button.setCheckable(False)
+        self.addWidget(self.objective_backward_button)
+
+        self.led_button = QCheckBox()
+        self.led_button.stateChanged.connect(self.toggle_led)
+        self.led_button.setChecked((self.c_p['blue_led']==0))
+
+        self.led_button.setStyleSheet("""
+            QCheckBox::indicator {
+                width: 30px;
+                height: 30px;
+            }
+            """)
+        led_label = QLabel("Sample LED ON/OFF")
+        self.addWidget(led_label) 
+        self.addWidget(self.led_button)
+        #self.setLayout(layout)
+        
+
+    def toggle_led(self, state):
+        """
+        Toggle the saving_toggled property of the DataChannel when the checkbox is toggled.
+        """
+        self.c_p['blue_led'] = 0 if bool(state) else 1
+        if self.c_p['blue_led'] == 0:
+            print("LED on")
+        else:
+            print("LED off")
+
+    def set_motor_speed(self, speed):
+        # Maybe have this toggleable
+        if np.abs(int(speed)) < 32760:
+            self.motor_speed = int(speed)
+        else:
+            self.motor_speed = int(32760)
+
+    # TODO check if x and y have been mixed up somewhere
+    def move_up(self):
+        # TODO fix naming of these!
+        self.c_p['motor_x_target_speed'] = self.motor_speed
+    def stop_y(self):
+        self.c_p['motor_x_target_speed'] = 0
+    def move_down(self):
+        self.c_p['motor_x_target_speed'] = - self.motor_speed
+
+
+    def move_right(self):
+        self.c_p['motor_y_target_speed'] = self.motor_speed
+    def stop_x(self):
+        self.c_p['motor_y_target_speed'] = 0
+    def move_left(self):
+        self.c_p['motor_y_target_speed'] = - self.motor_speed
+
+    def objective_forward(self):
+        self.c_p['motor_z_target_speed'] = self.motor_speed
+    def objective_stop(self):
+        self.c_p['motor_z_target_speed'] = 0
+    def objective_backward(self):
+        self.c_p['motor_z_target_speed'] = - self.motor_speed
+
+    
+
+
 class MotorControllerWindow(QWidget):
     """
     Widget for controlling the motors of the minitweezers setup. Allows for changing the 
@@ -151,9 +283,7 @@ class MotorControllerWindow(QWidget):
         self.c_p['motor_z_target_speed'] = self.motor_speed
     def objective_stop(self):
         self.c_p['motor_z_target_speed'] = 0
-        #print("Button obj back released")
     def objective_backward(self):
-        #print("Button obj back pressed")
         self.c_p['motor_z_target_speed'] = - self.motor_speed
 
     
@@ -413,7 +543,8 @@ class MinitweezersMouseMove(MouseInterface):
         self.c_p['minitweezers_target_pos'][2] = int(self.data_channels['Motor_z_pos'].get_data(1)[0])
         # left click
         if self.c_p['mouse_params'][0] == 1:
-            # TODO change to laser position
+            # TODO make move to position command
+            pass
             center_x = int((self.c_p['camera_width']/2 - self.c_p['AOI'][0])/self.c_p['image_scale'])
             center_y = int((self.c_p['camera_height']/2 - self.c_p['AOI'][2])/self.c_p['image_scale'])
             dx_pix = (self.c_p['mouse_params'][1] - center_x) * self.c_p['image_scale']
@@ -430,12 +561,8 @@ class MinitweezersMouseMove(MouseInterface):
 
         if self.c_p['mouse_params'][0] == 3:
             self.z_0 = self.c_p['mouse_params'][2]
+            self.z_prev = self.c_p['mouse_params'][2]
 
-        # Scroll wheel, 
-        # This code was never reached.
-        #elif self.c_p['mouse_params'][0] == 3:
-        #    self.y_prev = self.c_p['mouse_params'][2]
-        
     def mouseRelease(self):
         self.c_p['motor_x_target_speed'] = 0
         self.c_p['motor_y_target_speed'] = 0
@@ -460,11 +587,8 @@ class MinitweezersMouseMove(MouseInterface):
 
     def mouseMove(self):
         """
-        t = time()
-        dt = t - self.prev_t
-        if dt==0:
-            return
-        self.prev_t = t
+        This function is called when the mouse is moved. It is used to move the motors
+        in real time.
         """
         if self.c_p['mouse_params'][0] == 2:
 
@@ -472,6 +596,7 @@ class MinitweezersMouseMove(MouseInterface):
             dy = (self.c_p['mouse_params'][4] - self.y_prev)#/dt
             x_speed = self.check_speed(dx * self.speed_factor)
             y_speed = self.check_speed(dy * self.speed_factor)
+            
             self.c_p['motor_x_target_speed'] = int(x_speed)
             self.c_p['motor_y_target_speed'] = int(y_speed) # Changed sign here
             self.x_prev = self.c_p['mouse_params'][3]
@@ -480,6 +605,7 @@ class MinitweezersMouseMove(MouseInterface):
         elif self.c_p['mouse_params'][0] == 3:
             dz = (self.c_p['mouse_params'][4] - self.z_prev)#/dt
             z_speed = self.check_speed(dz * self.speed_factor/5)
+            
             self.c_p['motor_z_target_speed'] = int(z_speed)
             self.z_prev = self.c_p['mouse_params'][4]
 

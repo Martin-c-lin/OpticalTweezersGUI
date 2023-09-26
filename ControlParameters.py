@@ -59,6 +59,7 @@ def default_c_p():
            'piezo_pos': [10,10,10],
 
            # PIC reader c_p
+           
            'pic_channels':[# Channels to read from the controller
                             'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
@@ -73,6 +74,7 @@ def default_c_p():
                             'dac_ax','dac_ay','dac_bx','dac_by',
                             #'Motor_x_speed', 'Motor_y_speed', 'Motor_z_speed',
                            ],
+            
            'offset_channels':[ #TODO change so that the offset is default setting.
                             'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
@@ -99,7 +101,7 @@ def default_c_p():
                             ],
             'save_idx': 0, # Index of the saved data
            # Piezo outputs
-           'averaging_interval': 1000, # How many samples to average over in the data channels window
+           'averaging_interval': 10_000, # How many samples to average over in the data channels window
            'piezo_A': np.uint16([32768, 32768]),
            'piezo_B': np.uint16([32768, 32768]),
            'portenta_command_1': 0, # Command to send to the portenta, zero force etc.
@@ -136,14 +138,13 @@ def default_c_p():
             'AD_tube_position': [0,0,0], # Position of the AD tube in the chamber, motor coordinates
 
             # Minitweezers controller parameters
-            'COM_port': 'COM6',#'COM9',
+            'COM_port': 'COM6',#'COM6',
             'minitweezers_connected': False,
             'blue_led': 0, # Wheter the blue led is on or off, 0 for on and 1 for off
-            'objective_stepper_port': 'COM4',
-            'PSD_bits_per_micron_sum': 0.0703, # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns
-
+            'objective_stepper_port': 'COM4', # COM4
+            #'PSD_bits_per_micron_sum': [0.0703,0.0703], # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns
             'PSD_to_pos': [14.252,12.62], # The calibration factor for the position PSDs,
-            # pos_microns = PSD_A_X/PSD_A_sum *PSD_to_pos[0], calibrated the 30th of August 2023
+            'PSD_to_force': [0.02505,0.02565,0.02755,0.0287], # The calibration factor for the force PSDs,
 
             # Minitweezers protocols parameters
             'protocol_running': False,
@@ -151,8 +152,8 @@ def default_c_p():
             'protocol_data': np.uint8(np.zeros(13)),
 
             # Laser parameters
-            'laser_A_port':'COM8',
-            'laser_B_port':'COM9',
+            'laser_A_port':'COM11',
+            'laser_B_port':'COM12',
             'laser_A_current': 370, # Current in mA
             'laser_B_current': 330, # Current in mA
             'laser_A_on': False,
@@ -166,8 +167,8 @@ def default_c_p():
            'minitweezers_target_speed': [0,0,0],
            'motor_travel_speed': [2_000,2_000], # 5000 was somewhat high Speed of move to location.
            'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
-           'ticks_per_micron': 5.48,#24.45, # How many ticks per micron
-           'ticks_per_pixel': 0.3, #1.337, # How many pixels per micron
+           'ticks_per_micron': 6.24,#24.45, # How many ticks per micron
+           'ticks_per_pixel': 6.24/18.28, #1.337, # How many pixels per micron
             # TODO add a fix to when the controller is disconnected.
 
 
@@ -387,6 +388,10 @@ def get_data_dicitonary_new():
     ['F_total_X','pN'],
     ['F_total_Y','pN'],
     ['F_total_Z','pN'],
+    ['Position_A_X','microns'],
+    ['Position_A_Y','microns'],
+    ['Position_B_X','microns'],
+    ['Position_B_Y','microns'],
     ['PSD_Force_A_saved','pN'],
     ['Photodiode/PSD SUM A','a.u.'],
     ['Photodiode/PSD SUM B','a.u.'],

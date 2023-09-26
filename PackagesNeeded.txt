@@ -23,6 +23,11 @@ and requires python version 3.8 or earlier. Install with "pip install pythonnet=
 - pyvisa - Inteface with older instruments, eg temperature controller
 - pyserial - Interface with serial communications with controllers
 - pipython - PI stage for controlling piezo stage
+- pywin32 - Thorlabs camera needs this
+- matplotlib - visualization in some widgets
+- skimage - threshold tracking 
+- torch - Deep learning tracking
+- torhvision - Deep learning tracking
 
 Cupy is usefull, installed it with the following command.
 conda install -c conda-forge cupy cudatoolkit=11.3

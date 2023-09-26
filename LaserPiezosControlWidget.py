@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QCheckBox, QComboBox, QListWidget, QLineEdit,
-    QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,
+    QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,QHBoxLayout,
     QPushButton, QVBoxLayout, QWidget, QLabel
 )
 
@@ -15,8 +15,10 @@ from ThorlabsMotor import MotorThreadV2, PiezoThread
 from CustomMouseTools import MouseInterface
 from time import sleep
 
+
 # Maybe have this as a QThread?
 class LaserPiezoWidget(QWidget):
+    # TODO change to QDOCKwidget
 
     def __init__(self, c_p, data_channels):
         super().__init__()
@@ -96,10 +98,96 @@ class LaserPiezoWidget(QWidget):
         self.center_piezos_button.setCheckable(False)
         layout.addWidget(self.center_piezos_button)
 
+        # Add the calibration spinboxes
+        self.create_calibration_spinboxes()
+        layout.addLayout(self.Calibration_layout)
+
+        self.set_calibration_factors_button = QPushButton("Set calibration factors")
+        self.set_calibration_factors_button.clicked.connect(self.set_calibration_factors)
+        self.set_calibration_factors_button.setCheckable(False)
+        self.set_calibration_factors_button.setToolTip("Set the calibration factors for PSD-to-force conversion on controller.\n Needed for accurate autoalignment.")
+        layout.addWidget(self.set_calibration_factors_button)
+        
+
         self.set_slider_values()
         self.setLayout(layout)
         # TODO make this widget update itself when the piezos are moved by a separate function such as the
         #  pulling protocol. Also make it possible to autoalign both A and B at the same time.
+
+    def create_calibration_spinboxes(self):
+        self.Calibration_layout = QHBoxLayout()
+
+        # Add a QLabel with text "AX factor"
+        ax_label = QLabel("AX factor")
+        self.Calibration_layout.addWidget(ax_label)
+
+        self.AX_calibration_spinbox = QDoubleSpinBox()
+        self.AX_calibration_spinbox.setRange(0, 0.65000)
+        self.AX_calibration_spinbox.setSingleStep(0.00010)
+        self.AX_calibration_spinbox.setDecimals(5)
+        self.AX_calibration_spinbox.setValue(self.c_p['PSD_to_force'][0])
+        self.AX_calibration_spinbox.valueChanged.connect(self.set_AX_calibration)
+
+        # Add the QDoubleSpinBox to the QHBoxLayout
+        self.Calibration_layout.addWidget(self.AX_calibration_spinbox)
+
+        # Add a QLabel with text "AY factor"
+        ay_label = QLabel("AY factor")
+        self.Calibration_layout.addWidget(ay_label)
+
+        self.AY_calibration_spinbox = QDoubleSpinBox()
+        self.AY_calibration_spinbox.setRange(0, 0.65000)
+        self.AY_calibration_spinbox.setSingleStep(0.00010)
+        self.AY_calibration_spinbox.setDecimals(5)
+        self.AY_calibration_spinbox.setValue(self.c_p['PSD_to_force'][1])
+        self.AY_calibration_spinbox.valueChanged.connect(self.set_AY_calibration)
+
+        # Add the QDoubleSpinBox to the QHBoxLayout
+        self.Calibration_layout.addWidget(self.AY_calibration_spinbox)
+
+        # Add a QLabel with text "BX factor"
+        bx_label = QLabel("BX factor")
+        self.Calibration_layout.addWidget(bx_label)
+
+        self.BX_calibration_spinbox = QDoubleSpinBox()
+        self.BX_calibration_spinbox.setRange(0, 0.65000)
+        self.BX_calibration_spinbox.setSingleStep(0.00010)
+        self.BX_calibration_spinbox.setDecimals(5)
+        self.BX_calibration_spinbox.setValue(self.c_p['PSD_to_force'][2])
+        self.BX_calibration_spinbox.valueChanged.connect(self.set_BX_calibration)
+
+        # Add the QDoubleSpinBox to the QHBoxLayout
+        self.Calibration_layout.addWidget(self.BX_calibration_spinbox)
+
+        # Add a QLabel with text "BY factor"
+        by_label = QLabel("BY factor")
+        self.Calibration_layout.addWidget(by_label)
+
+        self.BY_calibration_spinbox = QDoubleSpinBox()
+        self.BY_calibration_spinbox.setRange(0, 0.65000)
+        self.BY_calibration_spinbox.setSingleStep(0.00010)
+        self.BY_calibration_spinbox.setDecimals(5)
+        self.BY_calibration_spinbox.setValue(self.c_p['PSD_to_force'][3])
+        self.BY_calibration_spinbox.valueChanged.connect(self.set_BY_calibration)
+
+        # Add the QDoubleSpinBox to the QHBoxLayout
+        self.Calibration_layout.addWidget(self.BY_calibration_spinbox)
+
+
+    def set_AX_calibration(self):
+        self.c_p['PSD_to_force'][0] = self.AX_calibration_spinbox.value()
+
+    def set_AY_calibration(self):
+        self.c_p['PSD_to_force'][1] = self.AY_calibration_spinbox.value()
+
+    def set_BX_calibration(self):
+        self.c_p['PSD_to_force'][2] = self.BX_calibration_spinbox.value()
+
+    def set_BY_calibration(self):
+        self.c_p['PSD_to_force'][3] = self.BY_calibration_spinbox.value()
+
+    def set_calibration_factors(self):
+        self.c_p['portenta_command_1'] = 3
 
     def set_slider_values(self):
         self.piezo_Ax_slider.setValue(self.c_p['piezo_A'][0])
@@ -162,14 +250,13 @@ class MinitweezersLaserMove(MouseInterface):
     
     def __init__(self, c_p ):
         self.c_p = c_p
-        self.speed_factor = 300
+        self.speed_factor = 600 * self.c_p['microns_per_pix']
         self.x_prev_A = 0
         self.y_prev_A = 0
         self.x_prev_B = 0
         self.y_prev_B = 0
 
     def mousePress(self):
-
         # left click
         if self.c_p['mouse_params'][0] == 1:
             self.x_prev_A = self.c_p['mouse_params'][1]
@@ -199,24 +286,23 @@ class MinitweezersLaserMove(MouseInterface):
         return number
 
     def mouseMove(self):
+        # TODO maybe not round here
+        # TODO scale by the size of the screen
+        dx = int(self.c_p['image_scale']*(self.c_p['mouse_params'][3] - self.x_prev_A)*self.speed_factor)
+        dy = int(self.c_p['image_scale']*(self.c_p['mouse_params'][4] - self.y_prev_A)*self.speed_factor)
         if self.c_p['mouse_params'][0] == 1: # A
-            # TODO maybe not round here
-            dx = int((self.c_p['mouse_params'][3] - self.x_prev_A)*self.speed_factor)
-            dy = int((self.c_p['mouse_params'][4] - self.y_prev_A)*self.speed_factor)
+
+
             self.c_p['piezo_A'][0] = self.check_limit(dx+self.c_p['piezo_A'][0])
             self.c_p['piezo_A'][1] = self.check_limit(dy+self.c_p['piezo_A'][1])
 
-            #print(f"Y Position of Piezo A is {self.c_p['piezo_A']}")
             self.x_prev_A = self.c_p['mouse_params'][3]
             self.y_prev_A = self.c_p['mouse_params'][4] 
 
         if self.c_p['mouse_params'][0] == 2: # B
-            dx = int((self.c_p['mouse_params'][3] - self.x_prev_B)*self.speed_factor)
-            dy = int((self.c_p['mouse_params'][4] - self.y_prev_B)*self.speed_factor)
+
             self.c_p['piezo_B'][0] = self.check_limit(-dx+self.c_p['piezo_B'][0])
             self.c_p['piezo_B'][1] = self.check_limit(dy+self.c_p['piezo_B'][1])
-
-            #print(f"Y Position of piezo B is {self.c_p['piezo_B']}")
             self.x_prev_B = self.c_p['mouse_params'][3]
             self.y_prev_B = self.c_p['mouse_params'][4] 
 

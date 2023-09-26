@@ -1,14 +1,13 @@
 import cv2
 import scipy
 import numpy as np
-from matplotlib import pyplot as plt
 import scipy.ndimage as ndi
 from skimage import measure
-import time
-from numba import njit, jit
+
+#from numba import njit, jit
 
 
-@njit(parallel=True)
+#@njit(parallel=True)
 def parallel_center_of_masses(data):
     # Without "parallel=True" in the jit-decorator
     # the prange statement is equivalent to range

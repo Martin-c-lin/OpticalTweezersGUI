@@ -237,7 +237,7 @@ class SelectLaserPosition(MouseInterface):
     def getToolName(self):
         return "Laser position"
     def getToolTip(self):
-        return "Click on the screen where the laser is located"
+        return "Click on the screen where the laser is located\n Used to tell the auto controll functions where to expect particles to be trappable."
 
 class autoControllerThread(Thread):
     def __init__(self, c_p, data_channels, main_window=None  ):

@@ -71,19 +71,40 @@ class PortentaComms(Thread):
         self.outdata[22] = self.c_p['motor_travel_speed'][0] >> 8
         self.outdata[23] = self.c_p['motor_travel_speed'][0] & 0xFF
         self.outdata[24] = self.c_p['portenta_command_1']
-        self.c_p['portenta_command_1'] = 0
+        if self.c_p['portenta_command_1'] <3:
+            # End Set zero values
+            self.outdata[26] = self.c_p['PSD_means'][0] >> 8
+            self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
+            self.outdata[28] = self.c_p['PSD_means'][1] >> 8
+            self.outdata[29] = self.c_p['PSD_means'][1] & 0xFF
+
+            self.outdata[30] = self.c_p['PSD_means'][2] >> 8
+            self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
+            self.outdata[32] = self.c_p['PSD_means'][3] >> 8
+            self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
+
+        if self.c_p['portenta_command_1'] == 3:
+            # Sends the calibration data. I.e force conversion factors
+            # Rescaling the values and converting to uint befor sending
+            AX = np.uint16(self.c_p['PSD_to_force'][0]*100_000)
+            self.outdata[26] = AX >> 8
+            self.outdata[27] = AX & 0xFF
+
+            AY = np.uint16(self.c_p['PSD_to_force'][1]*100_000)
+            self.outdata[28] = AY >> 8
+            self.outdata[29] = AY & 0xFF
+
+            BX = np.uint16(self.c_p['PSD_to_force'][2]*100_000)
+            self.outdata[30] = BX >> 8
+            self.outdata[31] = BX & 0xFF
+
+            BY = np.uint16(self.c_p['PSD_to_force'][3]*100_000)
+            self.outdata[32] = BY >> 8
+            self.outdata[33] = BY & 0xFF
+            
         self.outdata[25] = self.c_p['portenta_command_2']
-        # End bytes for the portenta
-        self.outdata[26] = self.c_p['PSD_means'][0] >> 8
-        self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
-        self.outdata[28] = self.c_p['PSD_means'][1] >> 8
-        self.outdata[29] = self.c_p['PSD_means'][1] & 0xFF
 
-        self.outdata[30] = self.c_p['PSD_means'][2] >> 8
-        self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
-        self.outdata[32] = self.c_p['PSD_means'][3] >> 8
-        self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
-
+        self.c_p['portenta_command_1'] = 0
         self.outdata[34] = self.c_p['blue_led']
 
         self.outdata[35:] = self.c_p['protocol_data']
@@ -97,20 +118,27 @@ class PortentaComms(Thread):
             self.serial_channel = None
             self.c_p['minitweezers_connected'] = False
 
-    def calc_quote_fast(self, quote, channel1, channel2, chunk_length):
+    def calc_quote_fast(self, quote, channel1, channel2, chunk_length, scale=1):
         D1 = self.data_channels[channel1].get_data(chunk_length)
         D2 = np.copy(self.data_channels[channel2].get_data(chunk_length).astype(float))
         D2[D2==0] = np.inf
-        self.data_channels[quote].put_data(D1/D2)
+        self.data_channels[quote].put_data(scale*D1/D2)
 
     def calculate_quotes_fast(self, chunk_length):
         # TODO suspect that this is too slow and maybe will make things go bonkers slow.
-        self.calc_quote_fast('F_A_X','PSD_A_F_X','PSD_A_F_sum', chunk_length)
-        self.calc_quote_fast('F_A_Y','PSD_A_F_Y','PSD_A_F_sum', chunk_length)
-        self.calc_quote_fast('F_B_X','PSD_B_F_X','PSD_B_F_sum', chunk_length)
-        self.calc_quote_fast('F_B_Y','PSD_B_F_Y','PSD_B_F_sum', chunk_length)
+        self.calc_quote_fast('Position_A_X','PSD_A_F_X','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_A_Y','PSD_A_F_Y','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_B_X','PSD_B_F_X','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
+        self.calc_quote_fast('Position_B_Y','PSD_B_F_Y','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
         self.calc_quote_fast('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum', chunk_length)
         self.calc_quote_fast('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum', chunk_length)
+
+        # Calculate force and put in data channels
+        self.data_channels['F_A_X'].put_data(self.data_channels['PSD_A_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][0])
+        self.data_channels['F_A_Y'].put_data(self.data_channels['PSD_A_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][1])
+        self.data_channels['F_B_X'].put_data(self.data_channels['PSD_B_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][2])
+        self.data_channels['F_B_Y'].put_data(self.data_channels['PSD_B_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][3])
+        # TODO put force data in as well 
 
     def read_data(self):
         """
