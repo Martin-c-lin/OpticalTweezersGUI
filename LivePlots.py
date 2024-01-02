@@ -265,7 +265,8 @@ class PlotWindow(QMainWindow):
         self.x = list(range(100))  # 100 time points
         self.y = [randint(0, 100) for _ in range(100)]  # 100 data points. todo remove if not really needed
         self.y2 = [randint(0, 100) for _ in range(100)]  # 100 data points
-        self.default_plot_length = 50_000
+        self.default_plot_length = 5_000
+        self.default_subsample = 100
         self.color_idx = 0 # to keep track of which color to use next
         self.circle = None
         self.aspect_locked = aspect_locked
@@ -280,6 +281,7 @@ class PlotWindow(QMainWindow):
         pen = pg.mkPen(color=Colors['red'])
         self.pen2 = pg.mkPen(color=Colors['green'])
 
+        # TODO remake the plot data so that each entry is a dictionary, will make poping easier
         # Initalizing the plot data
         self.plot_data = {
             'x':[x for x in x_keys],
@@ -287,8 +289,10 @@ class PlotWindow(QMainWindow):
             }
 
         self.plot_data['L'] = np.ones(len(x_keys), int) * self.default_plot_length
-        self.plot_data['sub_sample'] = 100*np.ones(len(x_keys), int) # Changed subsampling here 
+        self.plot_data['sub_sample'] = self.default_subsample * np.ones(len(x_keys), int) # Changed subsampling here 
         self.plot_data['pen'] = [pg.mkPen(color=Colors['red']) for _ in x_keys]
+        self.plot_data['averaging'] = [False for _ in x_keys]
+
         self.data_lines = []
         # TODO,have better default plots.
         self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen, name='plot 0'))
@@ -393,11 +397,13 @@ class PlotWindow(QMainWindow):
         
         self.plot_data['x'].append(xname)
         self.plot_data['y'].append(yname)
+        self.plot_data['averaging'].append(False)
+
         tmp = np.ones(len(self.plot_data['x']), int) * self.default_plot_length
         tmp[:-1] = self.plot_data['L'][:]
         self.plot_data['L'] = tmp # Add sub_sample here
         
-        tmp = np.ones(len(self.plot_data['x']), int)
+        tmp = self.default_subsample * np.ones(len(self.plot_data['x']), int)
         tmp[:-1] = self.plot_data['sub_sample'][:]
         self.plot_data['sub_sample'] = tmp # Add sub_sample here
         self.color_idx += 1
@@ -417,6 +423,8 @@ class PlotWindow(QMainWindow):
         self.plot_data['x'].pop(plot_idx)
         self.plot_data['y'].pop(plot_idx)
         self.plot_data['pen'].pop(plot_idx) # TODO fix out of range error which sometimes occur
+        self.plot_data['averaging'].pop(plot_idx)
+
         self.data_lines[plot_idx].setVisible(False)
         self.graphWidget.removeItem(self.data_lines[plot_idx])
         self.data_lines.pop(plot_idx)
@@ -506,12 +514,19 @@ class PlotWindow(QMainWindow):
             change_length_action.setCheckable(False)
             Plot_1_menu.addAction(change_length_action)
 
-            change_subsample_action = QAction("Adjust subsampling length", self)
+            change_subsample_action = QAction("Adjust subsample/averaging length", self)
             subsample_command = partial(self.create_plot_subsampler_window, idx)
-            change_subsample_action.setStatusTip("Change subsampling frequency")
-            change_subsample_action.triggered.connect(subsample_command )
+            change_subsample_action.setStatusTip("Changes the subsampling frequency or the averaging length")
+            change_subsample_action.triggered.connect(subsample_command)
             change_subsample_action.setCheckable(False)
             Plot_1_menu.addAction(change_subsample_action)
+
+            toggle_averaging_action = QAction("Toggle averaging", self)
+            toggle_averaging_command = partial(self.toggle_averaging, idx)
+            toggle_averaging_action.setStatusTip("Toggles averaging on/off")
+            toggle_averaging_action.triggered.connect(toggle_averaging_command)
+            toggle_averaging_action.setCheckable(True)
+            Plot_1_menu.addAction(toggle_averaging_action)
  
     def set_plot_symbol(self, plot_idx, symbol):
         # TODO save symbol as well
@@ -519,6 +534,9 @@ class PlotWindow(QMainWindow):
             self.data_lines[plot_idx].setSymbol(symbol)
         except Exception as E:
             print(E)
+
+    def toggle_averaging(self, plot_idx):
+        self.plot_data['averaging'][plot_idx] = not self.plot_data['averaging'][plot_idx]
 
     def create_plot_length_window(self, idx):
         self.PlotLengthWindow = PlotLengthWindow(self.plot_data, idx)
@@ -537,6 +555,43 @@ class PlotWindow(QMainWindow):
 
     def update_plot_data(self):
         # If the program has closed then we should also close this window
+        if self.plot_running and self.c_p['program_running']:
+            for idx in range(len(self.data_lines)):# enumerate(self.plot_data['x']):
+                x_key = self.plot_data['x'][idx]
+                y_key = self.plot_data['y'][idx]
+                L = int(self.plot_data['L'][idx])
+                S = int(self.plot_data['sub_sample'][idx])
+
+                # Here we check if the data is sampled at the same rate on the two channels.
+                # If not we compensate for that by averaging the data differently.
+                a = self.data[x_key] in self.c_p['single_sample_channels']
+                b = self.data[y_key] in self.c_p['single_sample_channels']
+                prefac = [1,1]
+                if a and not b:
+                    prefac[1] *= 14
+                if b and not a:
+                    prefac[0] *= 14
+                try:
+                    if self.plot_data['averaging'][idx]:
+                        # TODO maybe add option to not average both signals...
+                        x_data = self.non_overlapping_average(self.data[x_key].get_data(L*prefac[0]), S*prefac[0])
+                        y_data = self.non_overlapping_average(self.data[y_key].get_data(L*prefac[1]), S*prefac[1])                   
+                    else:
+                        nbr_elements = int(L/S)
+                        x_data = self.data[x_key].get_data_spaced(nbr_elements, S*prefac[0])
+                        y_data = self.data[y_key].get_data_spaced(nbr_elements, S*prefac[1])
+
+                    m_l = min(len(x_data), len(y_data))
+                    self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
+                    self.data_lines[idx].setPen(self.plot_data['pen'][idx]) # TODO check if needed
+
+                except Exception as e:
+                    print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
+                    print('Plotting error:', e)
+
+    """
+    def update_plot_data(self):
+        # If the program has closed then we should also close this window
         if self.plot_running:
             for idx in range(len(self.data_lines)):# enumerate(self.plot_data['x']):
                 x_key = self.plot_data['x'][idx]
@@ -545,21 +600,35 @@ class PlotWindow(QMainWindow):
                 S = int(self.plot_data['sub_sample'][idx])
 
                 try:
-                    nbr_elements = int(L/S)
-                    x_data = self.data[x_key].get_data_spaced(nbr_elements, S)
-                    y_data = self.data[y_key].get_data_spaced(nbr_elements, S)
+                    if self.plot_data['averaging'][idx]:
+                        # TODO maybe add option to not average both signals...
+                        x_data = self.non_overlapping_average(self.data[x_key].get_data(L), S)
+                        y_data = self.non_overlapping_average(self.data[y_key].get_data(L), S)                        
+                    else:
+                        nbr_elements = int(L/S)
+                        x_data = self.data[x_key].get_data_spaced(nbr_elements, S)
+                        y_data = self.data[y_key].get_data_spaced(nbr_elements, S)
+
                     m_l = min(len(x_data), len(y_data))
                     self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
+                    self.data_lines[idx].setPen(self.plot_data['pen'][idx]) # TODO check if needed
 
                 except Exception as e:
                     print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
                     print('Plotting error:', e)
-
-    def real_time_averaging(self, x, y, avg_len):
-        """
-        Uses
-        """
-        pass
+    """
+    def non_overlapping_average(self, signal, N):
+        # Calculate the number of chunks
+        num_chunks = len(signal) // N
+        
+        # Truncate the signal to fit an integer number of chunks
+        truncated_signal = signal[:N * num_chunks]
+        
+        # Reshape the truncated signal into a 2D array with 'N' columns
+        reshaped_signal = np.reshape(truncated_signal, (num_chunks, N))
+        
+        # Calculate the average along the columns
+        return np.mean(reshaped_signal, axis=1)
 
     def toggle_live_plotting(self):
         self.plot_running = not self.plot_running

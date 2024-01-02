@@ -165,7 +165,7 @@ class MotorControllerWindow(QWidget):
         super().__init__()
         self.c_p = c_p
         layout = QVBoxLayout()
-        self.motor_speed = 4 # TODO replace this with a motor speed in c_p
+        self.motor_speed = 400 # TODO replace this with a motor speed in c_p
         self.y_movement = 0
         self.setWindowTitle("Motor controller")
 

@@ -40,7 +40,7 @@ def default_c_p():
            'target_frame_rate': 50, # Target frame rate of the camera, if you want it limited.
            'filename': '',
            'video_name': 'Video',
-           'video_format': 'avi',
+           'video_format': 'npy', # Changed default to npy to reduce risk of losing data
            'image_format': 'png',
            'image_gain': 1,
            'image_offset': 0,
@@ -85,6 +85,7 @@ def default_c_p():
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
 
             'single_sample_channels':[
+                            # TODO make this a part of the data_Channels class. e.g sampling rate parameter
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos',
                             'message', # TODO fix message, actually saved force here
                             'dac_ax','dac_ay','dac_bx','dac_by',
@@ -101,7 +102,7 @@ def default_c_p():
                             ],
             'save_idx': 0, # Index of the saved data
            # Piezo outputs
-           'averaging_interval': 10_000, # How many samples to average over in the data channels window
+           'averaging_interval': 1_000, # How many samples to average over in the data channels window
            'piezo_A': np.uint16([32768, 32768]),
            'piezo_B': np.uint16([32768, 32768]),
            'portenta_command_1': 0, # Command to send to the portenta, zero force etc.
@@ -135,7 +136,10 @@ def default_c_p():
             'pipette_located': False,
             'center_pipette': False,
             'move_avoiding_particles': False,
+            'find_laser_position': False, # Updates the laser position to the current closest particle
             'AD_tube_position': [0,0,0], # Position of the AD tube in the chamber, motor coordinates
+            'pipette_particle_location': [1200,1200], # Location of the pipette particle in the image
+            'attach_DNA_automatically': False,
 
             # Minitweezers controller parameters
             'COM_port': 'COM6',#'COM6',
@@ -144,12 +148,23 @@ def default_c_p():
             'objective_stepper_port': 'COM4', # COM4
             #'PSD_bits_per_micron_sum': [0.0703,0.0703], # Conversion factor between the PSD x(or y)/sum channel and microns i.e x/sum / psd_bits_per_micron_sum = microns
             'PSD_to_pos': [14.252,12.62], # The calibration factor for the position PSDs,
-            'PSD_to_force': [0.02505,0.02565,0.02755,0.0287], # The calibration factor for the force PSDs,
+            'PSD_to_force': [0.02505,0.02565,0.02755,0.0287], # The calibration factor for the force PSDs, AX,AY, BX,BY
+            'Photodiode_sum_to_force': [1,1], # The calibration factor for the photodiode/PSD sum channel to force
 
             # Minitweezers protocols parameters
             'protocol_running': False,
             'protocol_type': 'Constant speed', # Options are constant force, constant velocity, constant distance
             'protocol_data': np.uint8(np.zeros(13)),
+
+            # Protocol for electrostatic interactions:
+            "electrostatic_protocol_toggled": False,
+            'electrostatic_protocol_running': False,
+            'electrostatic_protocol_finished': False,
+            'electrostatic_protocol_start': 20_000, # First postiion
+            'electrostatic_protocol_end': 30_000, # Last postion
+            'electrostatic_protocol_steps': 10, # stops of the protocol
+            'electrostatic_protocol_duration': 20, # Duration of the protocol in seconds per step
+            
 
             # Laser parameters
             'laser_A_port':'COM11',
@@ -215,10 +230,10 @@ class DataChannel:
     unit: str
     data: np.array
     saving_toggled: bool = True
-    max_len: int = 10_000_000 # 10_000_000 default
+    max_len: int = 100_000_000 # 10_000_000 default
     index: int = 0
     full: bool = False
-    max_retrivable: int = 1
+    max_retrivable: int = 1 # number of datapoints which have been saved.
 
     def __post_init__(self):
         # Preallocate memory for the maximum length
@@ -385,6 +400,8 @@ def get_data_dicitonary_new():
     ['F_A_Y','pN'],
     ['F_B_X','pN'],
     ['F_B_Y','pN'],
+    ['F_A_Z','pN'],
+    ['F_B_Z','pN'],
     ['F_total_X','pN'],
     ['F_total_Y','pN'],
     ['F_total_Z','pN'],

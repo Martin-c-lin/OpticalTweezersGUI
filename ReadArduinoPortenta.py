@@ -71,7 +71,9 @@ class PortentaComms(Thread):
         self.outdata[22] = self.c_p['motor_travel_speed'][0] >> 8
         self.outdata[23] = self.c_p['motor_travel_speed'][0] & 0xFF
         self.outdata[24] = self.c_p['portenta_command_1']
-        if self.c_p['portenta_command_1'] <3:
+
+        # TODO handle this more cleanly.
+        if self.c_p['portenta_command_1'] in [1,2,4,5]:
             # End Set zero values
             self.outdata[26] = self.c_p['PSD_means'][0] >> 8
             self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
@@ -86,19 +88,20 @@ class PortentaComms(Thread):
         if self.c_p['portenta_command_1'] == 3:
             # Sends the calibration data. I.e force conversion factors
             # Rescaling the values and converting to uint befor sending
-            AX = np.uint16(self.c_p['PSD_to_force'][0]*100_000)
+            psd_to_force_fac = 100_000
+            AX = np.uint16(self.c_p['PSD_to_force'][0]*psd_to_force_fac)
             self.outdata[26] = AX >> 8
             self.outdata[27] = AX & 0xFF
 
-            AY = np.uint16(self.c_p['PSD_to_force'][1]*100_000)
+            AY = np.uint16(self.c_p['PSD_to_force'][1]*psd_to_force_fac)
             self.outdata[28] = AY >> 8
             self.outdata[29] = AY & 0xFF
 
-            BX = np.uint16(self.c_p['PSD_to_force'][2]*100_000)
+            BX = np.uint16(self.c_p['PSD_to_force'][2]*psd_to_force_fac)
             self.outdata[30] = BX >> 8
             self.outdata[31] = BX & 0xFF
 
-            BY = np.uint16(self.c_p['PSD_to_force'][3]*100_000)
+            BY = np.uint16(self.c_p['PSD_to_force'][3]*psd_to_force_fac)
             self.outdata[32] = BY >> 8
             self.outdata[33] = BY & 0xFF
             
@@ -126,19 +129,31 @@ class PortentaComms(Thread):
 
     def calculate_quotes_fast(self, chunk_length):
         # TODO suspect that this is too slow and maybe will make things go bonkers slow.
-        self.calc_quote_fast('Position_A_X','PSD_A_F_X','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
-        self.calc_quote_fast('Position_A_Y','PSD_A_F_Y','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
-        self.calc_quote_fast('Position_B_X','PSD_B_F_X','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
-        self.calc_quote_fast('Position_B_Y','PSD_B_F_Y','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
+        self.calc_quote_fast('Position_A_X','PSD_A_P_X','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_A_Y','PSD_A_P_Y','PSD_A_P_sum', chunk_length, self.c_p['PSD_to_pos'][0])
+        self.calc_quote_fast('Position_B_X','PSD_B_P_X','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
+        self.calc_quote_fast('Position_B_Y','PSD_B_P_Y','PSD_B_P_sum', chunk_length, self.c_p['PSD_to_pos'][1])
         self.calc_quote_fast('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum', chunk_length)
         self.calc_quote_fast('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum', chunk_length)
 
+    def calc_forces(self, chunk_length):
         # Calculate force and put in data channels
+        # TODO may need to do something to make this a bit faster than it is now.
+        # Potentially only make the calculations on demand...
         self.data_channels['F_A_X'].put_data(self.data_channels['PSD_A_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][0])
         self.data_channels['F_A_Y'].put_data(self.data_channels['PSD_A_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][1])
         self.data_channels['F_B_X'].put_data(self.data_channels['PSD_B_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][2])
         self.data_channels['F_B_Y'].put_data(self.data_channels['PSD_B_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][3])
-        # TODO put force data in as well 
+
+        self.data_channels['F_A_Z'].put_data(self.data_channels['Photodiode/PSD SUM A'].get_data(chunk_length)*self.c_p['Photodiode_sum_to_force'][0])
+        self.data_channels['F_B_Z'].put_data(self.data_channels['Photodiode/PSD SUM B'].get_data(chunk_length)*self.c_p['Photodiode_sum_to_force'][1])
+
+        self.data_channels['F_total_X'].put_data(self.data_channels['F_A_X'].get_data(chunk_length) + self.data_channels['F_B_X'].get_data(chunk_length))
+        self.data_channels['F_total_Y'].put_data(self.data_channels['F_A_Y'].get_data(chunk_length) + self.data_channels['F_B_Y'].get_data(chunk_length))
+        self.data_channels['F_total_Z'].put_data(self.data_channels['F_A_Z'].get_data(chunk_length) + self.data_channels['F_B_Z'].get_data(chunk_length))
+
+    def calc_speeds(self, chunk_length):
+        pass
 
     def read_data(self):
         """
@@ -211,6 +226,8 @@ class PortentaComms(Thread):
         #self.data_channels['Motor time'].put_data(self.data_channels['T_time'].get_data_spaced(nbr_chunks,14)) # 14 data points per chunk
         self.data_channels['Motor time'].put_data(T_time[::14]) # 14 data points per chunk
         self.calculate_quotes_fast(data_length) # This works but is a bit slow...
+        self.calc_forces(data_length)
+        self.calc_speeds(data_length)
 
     def move_to_location(self):
         # TODO This should be done in a different thread maybe.
@@ -219,15 +236,20 @@ class PortentaComms(Thread):
         dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
 
         # Adjust speed depending on how far we are going
-        if dist_x**2 >10_000:
+        if dist_x**2 >100_000:
             self.c_p['motor_travel_speed'][0] = 25000
-        else:
-            self.c_p['motor_travel_speed'][0] = 1500
 
-        if dist_y**2 >10_000:
-            self.c_p['motor_travel_speed'][1] = 25000
+        elif dist_x**2 >40_000:
+            self.c_p['motor_travel_speed'][0] = 1500
         else:
+            self.c_p['motor_travel_speed'][0] = 500 # Changed from 1500
+
+        if dist_y**2 >100_000:
+            self.c_p['motor_travel_speed'][1] = 25000
+        elif dist_y**2 >40_000:
             self.c_p['motor_travel_speed'][1] = 1500
+        else:
+            self.c_p['motor_travel_speed'][1] = 500 #changed from 1500
 
         # Changed the signs of this function
         if dist_x**2>100:

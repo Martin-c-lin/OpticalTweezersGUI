@@ -189,7 +189,12 @@ class Worker(QThread):
             # Paint extra items on the screen
             self.qp = QPainter(picture)
             # Draw zoom in rectangle
-            self.c_p['click_tools'][self.c_p['mouse_params'][5]].draw(self.qp)
+            try:
+                self.c_p['click_tools'][self.c_p['mouse_params'][5]].draw(self.qp)
+            except Exception as E:
+                print(E)
+                print(len(self.c_p['click_tools']))
+                
             self.qp.setPen(self.blue_pen)
             if self.c_p['central_circle_on']:
                 self.draw_central_circle()
@@ -251,12 +256,6 @@ class MainWindow(QMainWindow):
             self.PortentaReaderT = PortentaComms(self.c_p, self.data_channels) #portentaReaderThread(self.c_p, self.data_channels) #portentaComms(self.c_p, self.data_channels)
             self.PortentaReaderT.start()
             sleep(0.1)
-            """
-            self.PICReaderT = PicReader(self.c_p, self.data_channels)
-            self.PICReaderT.start()
-            self.PICWriterT = PicWriter(self.c_p, self.PICReaderT.serial_channel)
-            self.PICWriterT.start()
-            """
             
         except Exception as E:
             print(E)
@@ -291,7 +290,7 @@ class MainWindow(QMainWindow):
         W = int(1920/4)
         sleep(0.5)
         self.c_p['frame_size'] = int(self.c_p['camera_width']/2), int(self.c_p['camera_height']/2)
-        self.label = QLabel("Hello")
+        self.label = QLabel("Camera window")
         self.label.setAlignment(Qt.AlignmentFlag.AlignTop)
         self.setCentralWidget(self.label)
         self.label.setMinimumSize(W,H)
@@ -458,6 +457,7 @@ class MainWindow(QMainWindow):
         print("Saving started")
 
     def stop_saving(self):
+        # TODO ensure that the there is no maximum limit on the filesize
         self.saving = False
         print("Saving stopped")
         self.stop_idx = self.data_channels['PSD_A_P_X'].index
@@ -467,7 +467,11 @@ class MainWindow(QMainWindow):
         for channel in self.data_channels:
             # TODO too many ifs and elses to make the code nice
             if self.data_channels[channel].saving_toggled:
+                # TODO test this carefully and see if there is some better way to do this,
+                # i.e can we handle also the other channels such as computer time efficiently here?
                 if channel in self.c_p['multi_sample_channels']:
+                    # TODO derived channels do not get saved correctly here.
+                    # Need to add parameter to the channel to indicate the sampling rate of it.
                     if self.start_idx < self.stop_idx:
                         data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
                     else:
@@ -511,7 +515,7 @@ class MainWindow(QMainWindow):
         action_menu.addAction(self.save_position_action)
 
         self.zero_force_action = QAction("Zero force", self)
-        self.zero_force_action.setStatusTip("Zero force for current value, resets it if it'z already zeroed")
+        self.zero_force_action.setStatusTip("Zero force for current value, resets it if it's already zeroed")
         self.zero_force_action.triggered.connect(self.zero_force_PSDs)
         action_menu.addAction(self.zero_force_action)
 
@@ -519,6 +523,16 @@ class MainWindow(QMainWindow):
         self.reset_force_psds_action.setStatusTip("Reset force PSDs their default values")
         self.reset_force_psds_action.triggered.connect(self.reset_force_PSDs)
         action_menu.addAction(self.reset_force_psds_action)
+
+        self.zero_position_action = QAction("Zero position", self)
+        self.zero_position_action.setStatusTip("Zero position for current value, resets it if it's already zeroed")
+        self.zero_position_action.triggered.connect(self.zero_position_PSDs)
+        action_menu.addAction(self.zero_position_action)
+
+        self.reset_position_psds_action = QAction("Reset position PSDs", self)
+        self.reset_position_psds_action.setStatusTip("Reset position PSDs their default values")
+        self.reset_position_psds_action.triggered.connect(self.reset_position_PSDs)
+        action_menu.addAction(self.reset_position_psds_action)
 
         self.saved_positions_submenu = action_menu.addMenu("Go to saved positions")
 
@@ -548,6 +562,18 @@ class MainWindow(QMainWindow):
 
     def reset_force_PSDs(self):
         self.c_p['portenta_command_1'] = 2
+
+    def zero_position_PSDs(self):
+        self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_P_X'].get_data_spaced(1000)))
+        self.c_p['PSD_means'][1] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_P_Y'].get_data_spaced(1000)))
+
+        self.c_p['PSD_means'][2] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_P_X'].get_data_spaced(1000)))
+        self.c_p['PSD_means'][3] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_P_Y'].get_data_spaced(1000)))
+        
+        self.c_p['portenta_command_1'] = 4
+
+    def reset_position_PSDs(self):
+        self.c_p['portenta_command_1'] = 5
 
     def add_position(self, idx):
         # Adds position to submenu
@@ -981,9 +1007,6 @@ def create_camera_toolbar_external(main_window):
     main_window.toggle_data_record_action.setCheckable(True)
     main_window.toggle_data_record_action.triggered.connect(main_window.record_data)
     main_window.camera_toolbar.addAction(main_window.toggle_data_record_action)
-
-
-
 
 
 if __name__ == '__main__':

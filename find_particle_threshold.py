@@ -163,7 +163,8 @@ def find_pipette_top(image,threshold=120, particle_size_threshold=10_000,
 
 
 def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=10_000,
-                     particle_upper_size_threshold=1000_000, fill_holes=False, ratio=2):
+                     particle_upper_size_threshold=1000_000, fill_holes=False, ratio=2,
+                      subtract_particles=False,positions=None,radii=50):
     """
     Function which locates pipette top using thresholding. Also uses GPU and specifically cupy.
     Significantly faster than the CPU version if there is a GPU available.
@@ -180,6 +181,13 @@ def find_pipette_top_GPU(image, threshold=120, particle_size_threshold=10_000,
     import cupyx.scipy.ndimage as cp_ndi
     from skimage.measure import label
     image_gpu = cp.array(image)
+
+    if subtract_particles:
+        fac = 1
+        blur = cp_ndi.gaussian_filter(image_gpu,300)
+        for pos in positions:
+            #image_gpu[pos[0]-radii:pos[0]+radii,pos[1]-radii*fac:pos[1]+radii*fac] = blur[pos[0]-radii:pos[0]+radii,pos[1]-radii*fac:pos[1]+radii*fac]
+            image_gpu[pos[1]-radii:pos[1]+radii,pos[0]-radii*fac:pos[0]+radii*fac] = blur[pos[1]-radii:pos[1]+radii,pos[0]-radii*fac:pos[0]+radii*fac]
 
     gf = cp_ndi.gaussian_filter(image_gpu, sigma=20)
     res = cp_ndi.gaussian_filter(image_gpu - gf, 3)

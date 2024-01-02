@@ -8,7 +8,7 @@ from PyQt6 import  QtGui
 
 from CustomMouseTools import MouseInterface
 from threading import Thread
-from time import sleep
+from time import sleep, time
 from queue import PriorityQueue
 
 
@@ -98,6 +98,8 @@ def simplify_path(path):
 
 class AutoControlWidget(QWidget):
     def __init__(self, c_p, data_channels):
+        # TODO ensure that the buttons are synced with what is actually happening.
+        # Maybe have the widget poll the different parameters and update the buttons accordingly.
         super().__init__()
         self.c_p = c_p
         self.data_channels = data_channels
@@ -125,10 +127,22 @@ class AutoControlWidget(QWidget):
         layout.addWidget(self.search_and_trap_button)
 
         self.center_pipette_button = QPushButton('Center pipette')
-        self.center_pipette_button.pressed.connect(self.center_pipette)
+        self.center_pipette_button.pressed.connect(self.toggle_center_pipette)
         self.center_pipette_button.setCheckable(True)
         self.center_pipette_button.setChecked(self.c_p['center_pipette'])
         layout.addWidget(self.center_pipette_button)
+
+        self.attach_DNA_button = QPushButton('Attach DNA')
+        self.attach_DNA_button.pressed.connect(self.attach_DNA)
+        self.attach_DNA_button.setCheckable(True)
+        self.attach_DNA_button.setChecked(self.c_p['attach_DNA_automatically'])
+        layout.addWidget(self.attach_DNA_button)
+
+        self.calculate_laser_position_button = QPushButton('Calculate laser position')
+        self.calculate_laser_position_button.pressed.connect(self.update_laser_position)
+        self.calculate_laser_position_button.setToolTip("Calculates the true laser position based on the predicted particle positions. \n This is done by finding the particle closest to the laser position and setting the laser position to that particle.")
+        self.calculate_laser_position_button.setCheckable(False)
+        layout.addWidget(self.calculate_laser_position_button)
 
         self.set_pippette_location_chamber_button = QPushButton('Set pipette location')
         self.set_pippette_location_chamber_button.pressed.connect(self.set_pippette_location_chamber)
@@ -147,8 +161,80 @@ class AutoControlWidget(QWidget):
         self.move_while_avoiding_beads_button.setChecked(self.c_p['move_avoiding_particles'])
         layout.addWidget(self.move_while_avoiding_beads_button)
 
+        self.EP_toggled_button = QPushButton('Toggle EP')
+        self.EP_toggled_button.pressed.connect(self.toggle_EP)
+        self.EP_toggled_button.setCheckable(True)
+        self.EP_toggled_button.setChecked(self.c_p['electrostatic_protocol_toggled'])
+        layout.addWidget(self.EP_toggled_button)
+
+
+        self.EP_start_spinbox = QSpinBox()
+        self.EP_start_spinbox.setRange(0, 65535)
+        self.EP_start_spinbox.valueChanged.connect(self.update_EP_start)
+        self.EP_start_spinbox.setValue(self.c_p['electrostatic_protocol_start'])
+        layout.addWidget(QLabel("EP start:"))
+        layout.addWidget(self.EP_start_spinbox)
+
+        self.EP_end_spinbox = QSpinBox()
+        self.EP_end_spinbox.setRange(0, 65535)
+        self.EP_end_spinbox.valueChanged.connect(self.update_EP_end)
+        self.EP_end_spinbox.setValue(self.c_p['electrostatic_protocol_end'])
+        layout.addWidget(QLabel("EP end:"))
+        layout.addWidget(self.EP_end_spinbox)
+
+        self.EP_step_spinbox = QSpinBox()
+        self.EP_step_spinbox.setRange(0, 65535)
+        self.EP_step_spinbox.valueChanged.connect(self.update_EP_step)
+        self.EP_step_spinbox.setValue(self.c_p['electrostatic_protocol_steps'])
+        layout.addWidget(QLabel("EP step:"))
+        layout.addWidget(self.EP_step_spinbox)
+
+        self.EP_duration_spinbox = QSpinBox()
+        self.EP_duration_spinbox.setRange(0, 65535)
+        self.EP_duration_spinbox.valueChanged.connect(self.update_EP_duration)
+        self.EP_duration_spinbox.setValue(self.c_p['electrostatic_protocol_duration'])
+        layout.addWidget(QLabel("EP duration:"))
+        layout.addWidget(self.EP_duration_spinbox)
+
         self.setLayout(layout)
 
+    def toggle_EP(self):
+        if not self.EP_toggled_button.isChecked() and not self.c_p['electrostatic_protocol_toggled']:
+            self.c_p['electrostatic_protocol_toggled'] = not self.c_p['electrostatic_protocol_toggled']
+        #print(self.c_p['electrostatic_protocol_toggled'])
+        if self.EP_toggled_button.isChecked() and self.c_p['electrostatic_protocol_toggled']:
+            self.c_p['electrostatic_protocol_toggled'] = not self.c_p['electrostatic_protocol_toggled']
+            self.c_p['electrostatic_protocol_finished'] = False
+            self.c_p['electrostatic_protocol_running'] = False
+
+        if self.c_p['electrostatic_protocol_toggled']:
+            self.c_p['electrostatic_protocol_finished'] = False
+        print("Toggled EP to ", self.c_p['electrostatic_protocol_toggled'], self.EP_toggled_button.isChecked())
+    
+    def update_EP_start(self):
+        val = int(self.EP_start_spinbox.value())
+        # if val > self.c_p['electrostatic_protocol_end']:
+        #     self.EP_start_spinbox.setValue(self.c_p['electrostatic_protocol_start'])
+        #    return
+        self.c_p['electrostatic_protocol_start'] = val
+
+    def update_EP_end(self):
+        val = int(self.EP_end_spinbox.value())
+        # if val < self.c_p['electrostatic_protocol_start']:
+        #     self.EP_end_spinbox.setValue(self.c_p['electrostatic_protocol_end'])
+        #     return
+        self.c_p['electrostatic_protocol_end'] = val
+
+    def update_EP_step(self):
+        val = int(self.EP_step_spinbox.value())
+        self.c_p['electrostatic_protocol_steps'] = val
+
+    def update_EP_duration(self):
+        val = int(self.EP_duration_spinbox.value())
+        self.c_p['electrostatic_protocol_duration'] = val
+
+    def update_laser_position(self):
+        self.c_p['find_laser_position'] = True
 
     def center_particle(self):
         """
@@ -156,6 +242,9 @@ class AutoControlWidget(QWidget):
         of the image. 
         """
         self.c_p['centering_on'] = not self.c_p['centering_on']
+
+    def attach_DNA(self):
+        self.c_p['attach_DNA_automatically'] = not self.attach_DNA_button.isChecked()
 
     
     def trap_particle(self):
@@ -172,11 +261,11 @@ class AutoControlWidget(QWidget):
         """
         self.c_p['search_and_trap'] = not self.c_p['search_and_trap']
 
-    def center_pipette(self):
+    def toggle_center_pipette(self):
         """
         Moves the stage so that the pipette is in the center of the image
         """
-        self.c_p['center_pipette'] = not self.c_p['center_pipette']
+        self.c_p['center_pipette'] = not self.center_pipette_button.isChecked()
 
         # If the button was just pressed then we should find the exact pipette location.
         if self.c_p['center_pipette']:
@@ -250,6 +339,21 @@ class autoControllerThread(Thread):
         self.y_lim_pos = 1 # search limits
         self.x_lim_pos = 0.1
         self.main_window = main_window
+
+        # DNA attachment parameters
+        self.DNA_move_direction = 0
+        self.bits_per_pixel = 500/self.c_p['microns_per_pix'] # Number of bits we need to change the piezo dac to move 1 micron, approximate
+        self.DNA_length_pix = 160  # approximate particle-particle-distance at which we should see a force ramp in the DNA
+        self.closest_distance = 70
+        self.sleep_counter = 0
+        self.force_limit = 30
+  
+        # Parameters for the electrostatic protocol experiments
+
+        # Explanation of parameters:
+        # pipette_located - Have the pipette been located in the latest image?
+        # center_pipette - Should the pipette be centered close to the laser position?
+        # 
 
 
     def find_closest_particle(self, center):
@@ -439,7 +543,13 @@ class autoControllerThread(Thread):
         distances_squared = [(x-LX)**2+(y-LY)**2 for x,y in self.c_p['predicted_particle_positions']]
         distances.pop(np.argmin(distances_squared))
 
-    def center_pippette(self):
+    def center_pipette(self, offset_pixels = 20):
+        """
+        In the long run this will need to be done also with the path search to avoid bumping the particles into the pipette.
+
+        
+        """
+        
         dx = self.c_p['pipette_location_chamber'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
         dy = self.c_p['pipette_location_chamber'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
         
@@ -449,25 +559,31 @@ class autoControllerThread(Thread):
             # Move to locaiton
             self.c_p['center_pipette'] = False
             return
-        # Check it's location in the frame
-        if not self.c_p['pipette_located']:
+        
+        if not self.c_p['locate_pippette']:
             self.c_p['locate_pippette'] = True
+            print("Locating pipette in image")
+            sleep(0.2)
+        # Check it's location in the frame and that we actually have a pipette to move to. 
+        if not self.c_p['pipette_located'] or self.c_p['pipette_location'][0]:
             return
-        # Check that we actually have a pipette to move to.
-        if self.c_p['pipette_location'][0] is None:
-            return
+        
         # Move the stage
+        # Does not take into account the zoom in correctly.
         dx_i = (self.c_p['laser_position'][0] - (self.c_p['pipette_location'][0] + self.c_p['AOI'][0])) * self.c_p['ticks_per_pixel']
-        dy_i = (self.c_p['laser_position'][1] - (self.c_p['pipette_location'][1] - self.c_p['AOI'][2])) * self.c_p['ticks_per_pixel']
-
-
+        dy_i = (self.c_p['laser_position'][1] - (self.c_p['pipette_location'][1] + self.c_p['AOI'][2])-offset_pixels) * self.c_p['ticks_per_pixel']
+        
+        if dx_i**2+dy_i**2 < 100:
+            self.c_p['center_pipette'] = False
+            print("Pipette centered")
+            return
+        # TODO Move along y first to avoid colliding with the pipette
         target_x_pos = int(self.data_channels['Motor_x_pos'].get_data(1)[0] - dx_i)
         target_y_pos = int(self.data_channels['Motor_y_pos'].get_data(1)[0] + dy_i) # Offest since we don't want to collide with the pipette.
 
         self.c_p['minitweezers_target_pos'] = [target_x_pos, target_y_pos, self.c_p['minitweezers_target_pos'][2]]
         print(f"Should move to {self.c_p['minitweezers_target_pos']} to center the pipette. {dx_i} {dy_i}")
         self.c_p['move_to_location'] = True
-        self.c_p['pipette_located'] = False    
 
     def check_trapped(self, threshold=10_000):
         # TODO threshold is a bit big I think.
@@ -477,8 +593,8 @@ class autoControllerThread(Thread):
             return False
         self.particles_in_view = True
 
-        LX = self.c_p['laser_position'][0]
-        LY = self.c_p['laser_position'][1]
+        LX = self.c_p['laser_position'][0] - self.c_p['AOI'][0]
+        LY = self.c_p['laser_position'][1] - self.c_p['AOI'][2]
         distances = [(x-LX)**2+(y-LY)**2 for x,y in self.c_p['predicted_particle_positions']]
         return min(distances) < threshold
 
@@ -517,6 +633,170 @@ class autoControllerThread(Thread):
     def custom_RBC_protocol(self):
         pass
 
+    def initiate_electrostatic_protocol(self):
+        self.EP_positions = np.linspace(self.c_p['electrostatic_protocol_start'],
+                                        self.c_p['electrostatic_protocol_end'],
+                                        self.c_p['electrostatic_protocol_steps'],
+                                        dtype=int)
+        self.c_p['electrostatic_protocol_running'] = True
+        self.c_p['electrostatic_protocol_steps'] = 0
+        self.c_p['electrostatic_protocol_finished'] = False
+        self.measurement_start_time = time()
+ 
+    def custom_electrostatic_protocol(self):
+
+        if not self.c_p['electrostatic_protocol_running']:
+            print("Initiating protocol")
+            self.initiate_electrostatic_protocol()
+
+        # Check if measurement needs to be updated
+        if time() - self.measurement_start_time < self.c_p['electrostatic_protocol_duration']:
+            return
+        
+        # Update the piezo position
+        self.c_p['piezo_B'][1] = self.EP_positions[self.c_p['electrostatic_protocol_steps']]
+
+        print(self.EP_positions[self.c_p['electrostatic_protocol_steps']])
+
+        # Toggle autoalign A for a short time
+        self.c_p['portenta_command_2'] = 1
+        sleep(0.5)
+        # Need to reset the piezo position to the autoaligned one
+        self.c_p['piezo_A'] = np.int32([np.mean(self.data_channels['dac_ax'].get_data_spaced(10)),
+                                np.mean(self.data_channels['dac_ay'].get_data_spaced(10))])
+        self.c_p['portenta_command_2'] = 0
+
+        self.c_p['electrostatic_protocol_steps'] += 1
+        if self.c_p['electrostatic_protocol_steps'] >= len(self.EP_positions):
+            self.c_p['electrostatic_protocol_running'] = False
+            self.c_p['electrostatic_protocol_finished'] = True
+            # TODO make it turn of automatically
+            return
+
+        # Update measurement start-time
+        self.measurement_start_time = time()
+        
+
+    def find_true_laser_position(self):
+        if not self.check_trapped() or not self.c_p['tracking_on']:
+            print("No particles detected close enough to current laser position")
+            return
+        LX = self.c_p['laser_position'][0] - self.c_p['AOI'][0]
+        LY = self.c_p['laser_position'][1] - self.c_p['AOI'][2]
+
+        min_pos = self.find_closest_particle([LX, LY])
+        #min_x = 1000
+        #min_dist = 2e10
+        #min_y = 1000
+        #for x,y in self.c_p['predicted_particle_positions']:
+        #    if (x-LX)**2+(y-LY)**2<min_dist:
+        #        min_dist = (x-LX)**2+(y-LY)**2
+        #        min_x = x
+        #        min_y = y
+        self.c_p['laser_position'] = [min_pos[0]+self.c_p['AOI'][0], min_pos[1]+self.c_p['AOI'][2]]
+        print("Laser position set to: ", self.c_p['laser_position'])
+
+    def find_closest_particle(self,reference_position):
+        try:
+            LX = reference_position[0]
+            LY = reference_position[1]
+            min_x = 1000
+            min_dist = 2e10
+            min_y = 1000
+            for x,y in self.c_p['predicted_particle_positions']:
+                if (x-LX)**2+(y-LY)**2<min_dist:
+                    min_dist = (x-LX)**2+(y-LY)**2
+                    min_x = x
+                    min_y = y
+            return [min_x, min_y]
+        except Exception as e:
+            return None
+        
+    def find_particle_in_pippette(self, offset=0):
+        if not self.c_p['tracking_on'] and self.c_p['locate_pippette'] and self.c_p['pipette_located']:
+            return # Need to have the trackings turned on to do this 
+        if len(self.c_p['predicted_particle_positions']) == 0:
+            return
+        if self.c_p['pipette_location'] is None or self.c_p['pipette_location'][1] is None:
+            return
+        min_pos = self.find_closest_particle([self.c_p['pipette_location'][0],self.c_p['pipette_location'][1]-offset])
+        if min_pos is None:
+            return
+        dx = (min_pos[0]-self.c_p['pipette_location'][0])
+        dy = (min_pos[1]-self.c_p['pipette_location'][1])
+        if dx**2> 1000:
+            print("Particle too far away from pipette", dx, dy, min_pos)
+            return
+        if dy**2> 10_000:
+            print("Particle too far away from pipette", dx, dy, min_pos)
+            return
+        return min_pos
+    
+    def attach_DNA(self):
+        # Check that the two necessary particles are in view, someitmes the bead in the pipette is misstaken for part of the pipette, thereof the offset.
+        pipette_particle = self.find_particle_in_pippette(offset=0)
+        if pipette_particle is None:
+            print("No particle in pipette")
+            return
+        if not self.check_trapped():
+            print("No particle trapped")
+            return
+        if not self.c_p['portenta_command_2'] == 1:
+            print("Not autoaligned")
+            return 
+        self.find_true_laser_position()
+
+        dx = ((self.c_p['laser_position'][0]-self.c_p['AOI'][0]) - pipette_particle[0])
+        dy = -((self.c_p['laser_position'][1]-self.c_p['AOI'][2]) - pipette_particle[1])
+
+        # Adjust DX
+        print("DX",self.c_p['laser_position'][0],self.c_p['AOI'][0],pipette_particle[0])
+        print("DY",self.c_p['laser_position'][1],self.c_p['AOI'][2],pipette_particle[1],dy)
+
+        if np.abs(dy)< 0.1 and np.abs(dx)< 1:
+            return
+
+        if dy<self.closest_distance-20:
+            self.c_p['piezo_B'][1] = max(0,self.c_p['piezo_B'][1] - 200)
+            if self.c_p['piezo_B'][1] == 0:
+                # Error which we cannot fix from here
+
+                return False
+            return
+        # TODO do a proper check if we can reasonably move to the correct location
+        if dx>3:
+            self.c_p['piezo_B'][0] = min(2**16-1,self.c_p['piezo_B'][0]+min(dx*self.bits_per_pixel, 400))
+            return
+        if dx<-3:
+            self.c_p['piezo_B'][0] = max(0,self.c_p['piezo_B'][0]+max(dx*self.bits_per_pixel, -400))
+            return
+        
+        
+        if dy>self.DNA_length_pix and self.data_channels['F_total_Y'].get_data(1)[0] > self.force_limit:
+            print("DNA found and attached")
+            return True
+        # Need to handle situation in which we start out with the bead in the trap being lower than that of the pipette.
+        if self.DNA_move_direction == 0:
+            # Move towards the pipette bead
+            if dy<self.closest_distance:
+
+                # Take a break of ca 10 seconds to let the DNA attach before separating the beads
+                if self.sleep_counter < 100:
+                    self.sleep_counter += 1
+                    return
+                self.sleep_counter = 0
+                self.DNA_move_direction = 1
+                return
+            self.c_p['piezo_B'][1] = min(2**16-1,self.c_p['piezo_B'][1]+ 200)
+
+        elif self.DNA_move_direction == 1:
+            # Move away from the pipette bead            
+            self.c_p['piezo_B'][1] = max(0,self.c_p['piezo_B'][1] - 200)
+            if dy>self.DNA_length_pix+10:
+                # Moved to far let's turn down
+                self.DNA_move_direction = 0
+                return
+        # 
 
     def run(self):
 
@@ -535,9 +815,17 @@ class autoControllerThread(Thread):
                     print("Particle alrady trapped")
                     self.c_p['search_and_trap'] = False
             elif self.c_p['center_pipette']:
-                self.center_pippette()
+                self.center_pipette()
             elif self.c_p['move_avoiding_particles']:
                 self.move_while_avoiding_particles()
+            elif self.c_p['electrostatic_protocol_toggled'] and not self.c_p['electrostatic_protocol_finished']:
+                self.custom_electrostatic_protocol()
+            elif self.c_p['find_laser_position']:
+                self.find_true_laser_position()
+                print(self.find_particle_in_pippette())
+                self.c_p['find_laser_position'] = False
+            elif self.c_p['attach_DNA_automatically']:
+                self.attach_DNA()
 
             self.data_channels['particle_trapped'].put_data(trapped)
             sleep(0.1)

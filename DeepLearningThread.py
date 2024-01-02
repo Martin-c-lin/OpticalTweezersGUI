@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,
     QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 )
-
+from PyQt6.QtCore import Qt
 
 sys.path.append('C:/Users/Martin/OneDrive/PhD/AutOT/') # TODO move this to same folder as this file
 
@@ -161,6 +161,7 @@ class DeepLearningAnalyserLDS(Thread):
         return np.array(x)*fac, np.array(y)*fac
 
     def weak_gpu_torch_unet_prediction(self):
+        # TODO make it so that this also incorporates the threhsolding on the GPU.
         # TODO cut to area of interest here
         width = self.c_p['image'].shape[0]
         height = self.c_p['image'].shape[1]
@@ -179,14 +180,13 @@ class DeepLearningAnalyserLDS(Thread):
             y1 = height
         start_pos_x = self.data_channels['Motor_x_pos'].get_data(1)[0]
         start_pos_y = self.data_channels['Motor_y_pos'].get_data(1)[0]
-        prediction = torch_unet_prediction(self.c_p['model'], self.c_p['image'][x0:x1,y0:y1], self.c_p['device'] ) 
+        prediction = torch_unet_prediction(self.c_p['model'], self.c_p['image'][x0:x1,y0:y1], self.c_p['device'], threshold=self.c_p['cutoff']) 
         if len(prediction) == 0:
             return prediction
         dx = (start_pos_x - self.data_channels['Motor_x_pos'].get_data(1)[0])/self.c_p['ticks_per_pixel']
         dy = (start_pos_y - self.data_channels['Motor_y_pos'].get_data(1)[0])/self.c_p['ticks_per_pixel']
         prediction[:,1] += x0 #- dy # SIgne etc wrong maybe?
         prediction[:,0] += y0 #+ dx
-        #print(prediction)
         self.c_p['particle_prediction_made'] = True
         return prediction
 
@@ -233,7 +233,13 @@ class DeepLearningAnalyserLDS(Thread):
         # TODO check if cupy is installed. If not, use numpy
         start_pos_x = self.data_channels['Motor_x_pos'].get_data(1)[0]
         start_pos_y = self.data_channels['Motor_y_pos'].get_data(1)[0]
-        self.c_p['pipette_location'][1], self.c_p['pipette_location'][0], _ = fpt.find_pipette_top_GPU(self.c_p['image']) #fpt.find_pipette_top_GPU(self.c_p['image'])
+        if self.c_p['tracking_on'] and len(self.c_p['predicted_particle_positions'])>0:
+            # Remove the particle in the pipette from the image prediction
+            self.c_p['pipette_location'][1], self.c_p['pipette_location'][0], _ = fpt.find_pipette_top_GPU(self.c_p['image'],subtract_particles=True,
+                                                                                                           positions=self.c_p['predicted_particle_positions'])
+            #print(self.c_p['predicted_particle_positions'])
+        else:
+            self.c_p['pipette_location'][1], self.c_p['pipette_location'][0], _ = fpt.find_pipette_top_GPU(self.c_p['image'])
         if self.c_p['pipette_location'][0] is None:
             return
 
@@ -242,8 +248,6 @@ class DeepLearningAnalyserLDS(Thread):
         self.c_p['pipette_location'][1] -= dy/self.c_p['ticks_per_pixel']
         self.c_p['pipette_location'][0] += dx/self.c_p['ticks_per_pixel']
 
-        print("Pipette at", self.c_p['pipette_location'][1], self.c_p['pipette_location'][0])
-        
         self.c_p['pipette_located'] = True # TODO add location in motor steps as well.
 
     def run(self):
@@ -282,22 +286,7 @@ class DeepLearningControlWidget(QWidget):
         self.training_image_button.pressed.connect(self.show_training_image)
         self.training_image_button.setCheckable(False)
         layout.addWidget(self.training_image_button)
-        """
-        self.train_network_button = QPushButton('Train network')
-        self.train_network_button.pressed.connect(self.train_network)
-        self.train_network_button.setCheckable(False)
-        layout.addWidget(self.train_network_button)
-        
-        self.load_network_button = QPushButton('Load network')
-        self.load_network_button.pressed.connect(self.load_network)
-        self.load_network_button.setCheckable(False)
-        layout.addWidget(self.load_network_button)
 
-        self.load_unet_button = QPushButton('Load deeptrack U-Net')
-        self.load_unet_button.pressed.connect(self.load_deeptrack_unet)
-        self.load_unet_button.setCheckable(False)
-        layout.addWidget(self.load_unet_button)
-        """
         self.load_pytorch_unet_button = QPushButton('Load pytorch U-Net')
         self.load_pytorch_unet_button.pressed.connect(self.load_pytorch_unet)
         self.load_pytorch_unet_button.setCheckable(False)
@@ -315,9 +304,19 @@ class DeepLearningControlWidget(QWidget):
         self.locate_pipette_button.setToolTip("Locate the pipette tip in the image")
         layout.addWidget(self.locate_pipette_button)
 
+        self.threshold_slider = QSlider(Qt.Orientation.Horizontal)
+        #self.threshold_slider.setOrientation(1)
+        self.threshold_slider.setMinimum(0)
+        self.threshold_slider.setMaximum(400)
+        self.threshold_slider.setValue(int(self.c_p['cutoff']))
+        self.threshold_slider.valueChanged.connect(self.set_threshold)
+        self.threshold_slider.setToolTip("Set the threshold for the particle detection")
+        layout.addWidget(self.threshold_slider)
+
         self.setLayout(layout)
 
-    # TODO add thereshold slider for the network
+    def set_threshold(self, threshold):
+        self.c_p['cutoff'] = threshold
 
     def save_network(self):
         # Not finished

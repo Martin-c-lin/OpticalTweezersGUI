@@ -34,6 +34,7 @@ class BaslerCamera(CameraInterface):
                     return image
         except TimeoutException as TE:
             print(f"Warning, camera timed out {TE}")
+
         except Exception as ex:
             """
             Here we are catching all other exceptions, this is not good practice but done to catch when the camera
@@ -127,6 +128,7 @@ class BaslerCamera(CameraInterface):
 
         except Exception as ex:
             print(f"Exposure time not accepted by camera, {ex}")
+
     def get_exposure_time(self):
 
         return self.cam.ExposureTime()

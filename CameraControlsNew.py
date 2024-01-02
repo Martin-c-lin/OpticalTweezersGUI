@@ -185,6 +185,7 @@ class CameraThread(Thread):
             if self.c_p['recording']:
                 img = copy(self.c_p['image'])
                 name = copy(self.c_p['video_name'])
+                # TODO add also the time for the frame captured as measured on the controller.
                 self.c_p['frame_queue'].put([img, name,
                                              self.c_p['video_format']])
             if count % 20 == 15:
@@ -247,7 +248,6 @@ def create_mp4_video_writer(c_p, video_name=None, image_width=None,
                                     })
     return video
 
-
 def npy_generator(path):
     """
     Used to read all the images in a npy image folder one at a time. Takes the
@@ -255,16 +255,23 @@ def npy_generator(path):
     images to read.
     """
 
-    directory = os.listdir(path)
+    def sorting_key(file_name):
+        """Key function to sort files based on the starting number."""
+        start_num = file_name.split('-')[0]
+        return int(start_num)
+
+    directory = sorted(os.listdir(path), key=sorting_key)  # Sort the files using the custom key
     done = False
-    num = '0'  # First frame to load
+    num = '-1'  # First frame to load
 
     while not done:
         done = True
         for file in directory:
+            print(file)
             idx = file.find('-')
-            if file[:idx] == num and file[-4:] == '.npy':
-                images = np.load(path+file)
+            print(str(int(file[:idx])),str(int(num)+1))
+            if file[:idx] == str(int(num)+1) and file[-4:] == '.npy':
+                images = np.load(os.path.join(path, file))  # Use os.path.join() for better compatibility
                 num = file[idx+1:-4]
                 done = False
                 for image in images:

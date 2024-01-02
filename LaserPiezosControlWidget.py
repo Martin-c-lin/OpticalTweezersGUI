@@ -218,6 +218,7 @@ class LaserPiezoWidget(QWidget):
             print('toggling autoalign of trap A')
             self.autoalign_B.setChecked(False)   
         else:
+            # TODO use a mean of the last 10 or so points instead f the last point
             self.c_p['piezo_A'] = np.int32([self.data_channels['dac_ax'].get_data_spaced(1)[0],
                                             self.data_channels['dac_ay'].get_data_spaced(1)[0]])
             self.c_p['piezo_B'] = np.int32([self.data_channels['dac_bx'].get_data_spaced(1)[0],
@@ -250,7 +251,7 @@ class MinitweezersLaserMove(MouseInterface):
     
     def __init__(self, c_p ):
         self.c_p = c_p
-        self.speed_factor = 600 * self.c_p['microns_per_pix']
+        self.speed_factor = 4_400 * self.c_p['microns_per_pix']
         self.x_prev_A = 0
         self.y_prev_A = 0
         self.x_prev_B = 0
@@ -288,10 +289,10 @@ class MinitweezersLaserMove(MouseInterface):
     def mouseMove(self):
         # TODO maybe not round here
         # TODO scale by the size of the screen
-        dx = int(self.c_p['image_scale']*(self.c_p['mouse_params'][3] - self.x_prev_A)*self.speed_factor)
-        dy = int(self.c_p['image_scale']*(self.c_p['mouse_params'][4] - self.y_prev_A)*self.speed_factor)
-        if self.c_p['mouse_params'][0] == 1: # A
 
+        if self.c_p['mouse_params'][0] == 1: # A
+            dx = int(self.c_p['image_scale']*(self.c_p['mouse_params'][3] - self.x_prev_A)*self.speed_factor)
+            dy = int(self.c_p['image_scale']*(self.c_p['mouse_params'][4] - self.y_prev_A)*self.speed_factor)
 
             self.c_p['piezo_A'][0] = self.check_limit(dx+self.c_p['piezo_A'][0])
             self.c_p['piezo_A'][1] = self.check_limit(dy+self.c_p['piezo_A'][1])
@@ -300,6 +301,8 @@ class MinitweezersLaserMove(MouseInterface):
             self.y_prev_A = self.c_p['mouse_params'][4] 
 
         if self.c_p['mouse_params'][0] == 2: # B
+            dx = int(self.c_p['image_scale']*(self.c_p['mouse_params'][3] - self.x_prev_B)*self.speed_factor)
+            dy = int(self.c_p['image_scale']*(self.c_p['mouse_params'][4] - self.y_prev_B)*self.speed_factor)
 
             self.c_p['piezo_B'][0] = self.check_limit(-dx+self.c_p['piezo_B'][0])
             self.c_p['piezo_B'][1] = self.check_limit(dy+self.c_p['piezo_B'][1])
