@@ -2,7 +2,7 @@
 """
 Created on Wed Oct 19 15:50:13 2022
 
-@author: marti
+@author: Martin Selin
 """
 import sys
 import cv2 # Certain versions of this won't work
@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QRunnable, QObject, QPoint, QRect, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen, QIntValidator
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen, QIntValidator, QKeySequence
 
 from pyqtgraph import PlotWidget, plot
 import pyqtgraph as pg
@@ -31,11 +31,8 @@ from CameraControlsNew import CameraThread, VideoWriterThread, CameraClicks
 from ControlParameters import default_c_p, get_data_dicitonary_new
 from TemperatureControllerTED4015 import TemperatureThread
 from TemperatureControllerWidget import TempereatureControllerWindow
-#from ReadPicUart import PicReader, PicWriter
 from LivePlots import PlotWindow
 from SaveDataWidget import SaveDataWindow
-# from PIStage import PIStageThread
-# from PIStageWidget import PIStageWidget
 import MotorControlWidget
 from QWidgetDockContainer import QWidgetWindowDocker
 from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
@@ -43,14 +40,19 @@ from CameraMeasurementTool import CameraMeasurements
 from DeepLearningThread import DeepLearningAnalyserLDS, DeepLearningControlWidget
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
-from ReadArduinoPortenta import PortentaComms
-# from PortentaMultiprocess import PortentaComms
+# from ReadArduinoPortenta import PortentaComms
+from PortentaMultiprocess import PortentaComms
 
 from PullingProtocolWidget import PullingProtocolWidget
 from StepperObjective import ObjectiveStepperController, ObjectiveStepperControllerToolbar
+from MicrofluidicsPumpController import MicrofluidicsControllerWidget, ElvesysMicrofluidicsController
+
 import AutoController
 import LaserController
 
+
+# TODO put the camera window into the main window in the same manner as the other widgets. Also add the force and postiion
+# windows below the main window as there is often space there to do stuff.
 
 class Worker(QThread):
     '''
@@ -164,8 +166,7 @@ class Worker(QThread):
             
             self.c_p['image_scale'] = max(self.image.shape[1]/W, self.image.shape[0]/H)
             
-            self.preprocess_image()
-            
+            self.preprocess_image()            
 
             # It is quite sensitive to the format here, won't accept any missmatch
             
@@ -218,6 +219,7 @@ class MainWindow(QMainWindow):
         self.data_channels = get_data_dicitonary_new()
         self.video_idx = 0
         self.data_idx = 0 # Index of data save
+        # self.start_idx_motors = 0
         self.saving = False
         # Start camera threads
         self.CameraThread = None
@@ -233,22 +235,7 @@ class MainWindow(QMainWindow):
         except Exception as E:
             print(f"Camera error!\n{E}")
         self.TemperatureThread = None
-        """
-        try:
-            self.TemperatureThread = TemperatureThread(1,'Temperature Thread',
-                                                       self.c_p, self.data_channels)
-            #(self, threadID, name, c_p, temperature_controller=None, max_diff=0.05)
-            self.TemperatureThread.start()
-        except Exception as E:
-            print(E)
-        
-        try:
-            self.PiezoThread = PIStageThread(3, "PI piezo thread", self.c_p)
-            self.PiezoThread.start()
-        except Exception as E:
-            print(E)
 
-        """
         self.channelView = None
         self.PortentaReaderT = None
         try:
@@ -300,7 +287,6 @@ class MainWindow(QMainWindow):
         th.start()
 
         # Create toolbar
-        #self.create_camera_toolbar()
         create_camera_toolbar_external(self)
         self.addToolBarBreak() 
         self.create_mouse_toolbar()
@@ -333,6 +319,12 @@ class MainWindow(QMainWindow):
         self.pullingProtocolDock = QWidgetWindowDocker(self.pullingProtolWidget, "Pulling protocol")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.pullingProtocolDock)
 
+        self.microfluidicsController = ElvesysMicrofluidicsController()
+        self.microfluidicsController.connect(self.c_p['pump_adress'])
+        self.MicrofludicsWidget = MicrofluidicsControllerWidget(self.c_p, self.microfluidicsController)
+        self.MicrofludicsDock = QWidgetWindowDocker(self.MicrofludicsWidget, "Microfluidics controls")
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.MicrofludicsDock)
+
         
         self.show()
 
@@ -347,7 +339,7 @@ class MainWindow(QMainWindow):
         # Here is where all the tools in the mouse toolbar are added
         self.c_p['click_tools'].append(CameraClicks(self.c_p))
         self.c_p['click_tools'].append(MotorControlWidget.MinitweezersMouseMove(self.c_p, self.data_channels))
-        # self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors
+        # self.c_p['click_tools'].append(MotorControlWidget.MotorClickMove(self.c_p,)) # Thorlabs motors and controller
         self.c_p['click_tools'].append(MinitweezersLaserMove(self.c_p))
         #self.c_p['click_tools'].append(MouseAreaSelect(self.c_p))
         self.c_p['click_tools'].append(AutoController.SelectLaserPosition(self.c_p))
@@ -358,14 +350,19 @@ class MainWindow(QMainWindow):
         self.mouse_toolbar = QToolBar("Mouse tools")
         self.addToolBar(self.mouse_toolbar)
         self.mouse_actions = []
-        
+        number_keys = [Qt.Key.Key_1, Qt.Key.Key_2, Qt.Key.Key_3, Qt.Key.Key_4, Qt.Key.Key_5, 
+               Qt.Key.Key_6, Qt.Key.Key_7, Qt.Key.Key_8, Qt.Key.Key_9, Qt.Key.Key_0]
+
         for idx, tool in enumerate(self.c_p['click_tools']):
             self.mouse_actions.append(QAction(tool.getToolName(), self))
-            self.mouse_actions[-1].setToolTip(tool.getToolTip())
+            self.mouse_actions[-1].setToolTip(tool.getToolTip()+"\nShortcut: Ctrl+"+str(idx+1))
             command = partial(self.set_mouse_tool, idx)
             self.mouse_actions[-1].triggered.connect(command)
             self.mouse_actions[-1].setCheckable(True)
+            if idx < 10:
+                self.mouse_actions[-1].setShortcut(QKeySequence(Qt.Modifier.CTRL | number_keys[idx]))
             self.mouse_toolbar.addAction(self.mouse_actions[-1])
+            # TODO add a method for setting the tool with shortcut
         self.mouse_actions[self.c_p['mouse_params'][5]].setChecked(True)
         
     def set_mouse_tool(self, tool_no=0):
@@ -469,8 +466,8 @@ class MainWindow(QMainWindow):
             if self.data_channels[channel].saving_toggled:
                 # TODO test this carefully and see if there is some better way to do this,
                 # i.e can we handle also the other channels such as computer time efficiently here?
-                if channel in self.c_p['multi_sample_channels']:
-                    # TODO derived channels do not get saved correctly here.
+                if channel in self.c_p['multi_sample_channels'] or channel in self.c_p['derived_PSD_channels']:
+                    # TODO derived channels did not get saved correctly here, check if the fix works.
                     # Need to add parameter to the channel to indicate the sampling rate of it.
                     if self.start_idx < self.stop_idx:
                         data[channel] = self.data_channels[channel].data[self.start_idx:self.stop_idx]
@@ -552,27 +549,40 @@ class MainWindow(QMainWindow):
         action_menu.addAction(self.central_circle_button)
 
     def zero_force_PSDs(self):
-        self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_X'].get_data_spaced(1000)))
-        self.c_p['PSD_means'][1] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_F_Y'].get_data_spaced(1000)))
+        # Very weird to first convert to uint and then add 32768
+                
+        self.c_p['PSD_force_means'][0] += np.mean(self.data_channels['PSD_A_F_X'].get_data_spaced(1000))
+        self.c_p['PSD_force_means'][1] += np.mean(self.data_channels['PSD_A_F_Y'].get_data_spaced(1000))
+        self.c_p['PSD_force_means'][2] += np.mean(self.data_channels['PSD_B_F_X'].get_data_spaced(1000))
+        self.c_p['PSD_force_means'][3] += np.mean(self.data_channels['PSD_B_F_Y'].get_data_spaced(1000))
 
-        self.c_p['PSD_means'][2] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_X'].get_data_spaced(1000)))
-        self.c_p['PSD_means'][3] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_F_Y'].get_data_spaced(1000)))
-
+        self.c_p['PSD_means'][0] = 32768 +  np.uint16(self.c_p['PSD_force_means'][0])
+        self.c_p['PSD_means'][1] = 32768 + np.uint16(self.c_p['PSD_force_means'][1])
+        self.c_p['PSD_means'][2] = 32768 + np.uint16(self.c_p['PSD_force_means'][2])
+        self.c_p['PSD_means'][3] = 32768 + np.uint16(self.c_p['PSD_force_means'][3])
+        print(self.c_p['PSD_means'][0], self.c_p['PSD_force_means'][0])
+        
         self.c_p['portenta_command_1'] = 1
 
     def reset_force_PSDs(self):
+        self.c_p['PSD_force_means'] = [0, 0, 0, 0]
         self.c_p['portenta_command_1'] = 2
 
     def zero_position_PSDs(self):
-        self.c_p['PSD_means'][0] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_P_X'].get_data_spaced(1000)))
-        self.c_p['PSD_means'][1] = 32768 + np.uint16(np.mean(self.data_channels['PSD_A_P_Y'].get_data_spaced(1000)))
-
-        self.c_p['PSD_means'][2] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_P_X'].get_data_spaced(1000)))
-        self.c_p['PSD_means'][3] = 32768 + np.uint16(np.mean(self.data_channels['PSD_B_P_Y'].get_data_spaced(1000)))
         
+        self.c_p['PSD_position_means'][0] += np.mean(self.data_channels['PSD_A_P_X'].get_data_spaced(1000))
+        self.c_p['PSD_position_means'][1] += np.mean(self.data_channels['PSD_A_P_Y'].get_data_spaced(1000))
+        self.c_p['PSD_position_means'][2] += np.mean(self.data_channels['PSD_B_P_X'].get_data_spaced(1000))
+        self.c_p['PSD_position_means'][3] += np.mean(self.data_channels['PSD_B_P_Y'].get_data_spaced(1000))
+
+        self.c_p['PSD_means'][0] = 32768 + np.uint16(self.c_p['PSD_position_means'][0])
+        self.c_p['PSD_means'][1] = 32768 + np.uint16(self.c_p['PSD_position_means'][1])
+        self.c_p['PSD_means'][2] = 32768 + np.uint16(self.c_p['PSD_position_means'][2])
+        self.c_p['PSD_means'][3] = 32768 + np.uint16(self.c_p['PSD_position_means'][3])
         self.c_p['portenta_command_1'] = 4
 
     def reset_position_PSDs(self):
+        self.c_p['PSD_position_means'] = [0, 0, 0, 0]
         self.c_p['portenta_command_1'] = 5
 
     def add_position(self, idx):
@@ -600,6 +610,7 @@ class MainWindow(QMainWindow):
 
     def save_position(self):
         if not self.c_p['minitweezers_connected']:
+            print("Minitweezers not connected")
             x = self.c_p['stepper_current_position'][0]
             y = self.c_p['stepper_current_position'][1]
             z = 0
@@ -617,6 +628,7 @@ class MainWindow(QMainWindow):
             print("No position saved")
 
     def goto_position(self,idx):
+        print(f"Moving to position {self.c_p['saved_positions'][idx][0]}")
         if idx>len(self.c_p['saved_positions']):
             return
         if self.c_p['move_to_location']:
@@ -664,26 +676,12 @@ class MainWindow(QMainWindow):
         self.open_motor_window.setCheckable(False)
         window_menu.addAction(self.open_motor_window)
 
-
         self.open_stepper_window = QAction("Objective motor window", self)
         self.open_stepper_window.setToolTip("Open window for manual motor control, objective stepper motor.")
         self.open_stepper_window.triggered.connect(self.open_stepper_objective)
         self.open_stepper_window.setCheckable(False)
         window_menu.addAction(self.open_stepper_window)
 
-        """
-        self.open_thorlabsM_window = QAction("Thorlabs motor window", self)
-        self.open_thorlabsM_window.setToolTip("Open window for manual motor control, thorlabs motors.")
-        self.open_thorlabsM_window.triggered.connect(self.open_thorlabs_motor_control_window)
-        self.open_thorlabsM_window.setCheckable(False)
-        window_menu.addAction(self.open_thorlabsM_window)
-
-        self.open_plankton_window = QAction("Plankton viewer", self)
-        self.open_plankton_window.setToolTip("Open plankton viewer window.")
-        self.open_plankton_window.triggered.connect(self.openPlanktonViwer)
-        self.open_plankton_window.setCheckable(False)
-        window_menu.addAction(self.open_plankton_window)
-        """
         self.open_deep_window = QAction("DL window", self)
         self.open_deep_window.setToolTip("Open window for deep learning control.")
         self.open_deep_window.triggered.connect(self.OpenDeepLearningWindow)
@@ -720,11 +718,14 @@ class MainWindow(QMainWindow):
         self.open_pulling_protocoL_window.setCheckable(False)
         window_menu.addAction(self.open_pulling_protocoL_window)
 
+        self.open_microfluidics_window = QAction("Microfluidics controller", self)
+        self.open_microfluidics_window.setToolTip("Opens a window for the microfluidics controller.")
+        self.open_microfluidics_window.triggered.connect(self.open_microfluidics_window_func)
+        self.open_microfluidics_window.setCheckable(False)
+        window_menu.addAction(self.open_microfluidics_window)
 
     def openPlanktonViwer(self):
         self.planktonView = PlanktonViewer(self.c_p)
-
-
 
     def open_channels_winoow(self):
         self.channelView = CurrentValueWindow(self.c_p, self.data_channels)
@@ -734,19 +735,17 @@ class MainWindow(QMainWindow):
         self.c_p['video_format'] = video_format
 
     def open_motor_control_window(self):
-        #TODO all these methods are really basically the same, factor them out into a single one
+        #TODO all these opening methods are really basically the same, factor them out into a single one
         self.MotorControlDock.show()
         if self.MotorControlDock.isFloating():
             self.MotorControlDock.setFloating(False)
 
     def open_laser_window(self):
-        # TODO make it impossible to open more than one of these windows
-        #self.laser_window = LaserController.LaserControllerWidget(self.c_p, self)
-        #self.laser_window.show()
 
         self.LaserControllerDock.show()
         if self.LaserControllerDock.isFloating():
             self.LaserControllerDock.setFloating(False)
+
     def open_stepper_objective(self):
         #self.obective_controller = ObjectiveStepperController(self.c_p, self.ArduinoUnoSerial)
         #self.obective_controller.show()
@@ -756,6 +755,11 @@ class MainWindow(QMainWindow):
         self.pullingProtocolDock.show()
         if self.pullingProtocolDock.isFloating():
             self.pullingProtocolDock.setFloating(False)
+
+    def open_microfluidics_window_func(self):
+        self.MicrofludicsDock.show()
+        if self.MicrofludicsDock.isFloating():
+            self.MicrofludicsDock.setFloating(False)
 
     def OpenLaserPiezoWidget(self):
         self.laserPiezoDock.show()
@@ -801,9 +805,9 @@ class MainWindow(QMainWindow):
         if self.c_p['recording']:
             self.c_p['video_name'] = self.c_p['filename'] + '_video' + str(self.video_idx)
             self.video_idx += 1
-            self.record_action.setToolTip("Turn OFF recording.")
+            self.record_action.setToolTip("Turn OFF recording.\n can also be toggled with CTRL+R")
         else:
-            self.record_action.setToolTip("Turn ON recording.")
+            self.record_action.setToolTip("Turn ON recording.\n can also be toggled with CTRL+R")
 
     def snapshot(self):
         # Captures a snapshot of what the camera is viewing and saves that
@@ -947,21 +951,27 @@ def create_camera_toolbar_external(main_window):
 
     # main_window.add_camera_actions(main_window.camera_toolbar)
     main_window.zoom_action = QAction("Zoom out", main_window)
-    main_window.zoom_action.setToolTip("Resets the field of view of the camera.")
+    main_window.zoom_action.setToolTip("Resets the field of view of the camera.\n CTRL+O")
+    main_window.zoom_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_O))
     main_window.zoom_action.triggered.connect(main_window.ZoomOut)
     main_window.zoom_action.setCheckable(False)
 
     main_window.record_action = QAction("Record video", main_window)
-    main_window.record_action.setToolTip("Turn ON recording.")
+    main_window.record_action.setToolTip("Turn ON recording.\n CTRL+R")
     main_window.record_action.setShortcut('Ctrl+R')
     main_window.record_action.triggered.connect(main_window.ToggleRecording)
+    main_window.record_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_R))
+
     main_window.record_action.setCheckable(True)
 
     main_window.snapshot_action = QAction("Snapshot", main_window)
-    main_window.snapshot_action.setToolTip("Take snapshot of camera view.")
-    main_window.snapshot_action.setShortcut('Shift+S')
+    main_window.snapshot_action.setToolTip("Take snapshot of camera view.\n CTRL+S")
+    #main_window.snapshot_action.setShortcut('Shift+S')
     main_window.snapshot_action.triggered.connect(main_window.snapshot)
     main_window.snapshot_action.setCheckable(False)
+    #self.button.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_D))
+    # Create a shortcut and connect it to a custom method
+    main_window.snapshot_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_S))
 
     main_window.set_exp_tim = QAction("Set exposure time", main_window)
     main_window.set_exp_tim.setToolTip("Sets exposure time to the value in the textboox")
@@ -1003,13 +1013,15 @@ def create_camera_toolbar_external(main_window):
     main_window.camera_toolbar.addAction(main_window.set_gain_action)
 
     main_window.toggle_data_record_action = QAction("Start saving data", main_window)
-    main_window.toggle_data_record_action.setToolTip(f"Turn ON recodording of data.\nData will be saved to fileneame set in files windows.\n Can save a maximum of {main_window.data_channels['T_time'].max_len} data points before overwriting old ones.")
+    main_window.toggle_data_record_action.setToolTip(f"Turn ON recodording of data.\nData will be saved to fileneame set in files windows.\n Can save a maximum of {main_window.data_channels['T_time'].max_len} data points before overwriting old ones.\n CTRL+D")
     main_window.toggle_data_record_action.setCheckable(True)
     main_window.toggle_data_record_action.triggered.connect(main_window.record_data)
+    main_window.toggle_data_record_action.setShortcut(QKeySequence(Qt.Modifier.CTRL | Qt.Key.Key_D))
     main_window.camera_toolbar.addAction(main_window.toggle_data_record_action)
 
 
 if __name__ == '__main__':
+    print("Hello")
     app = QApplication(sys.argv)
     w = MainWindow()
     w.show()

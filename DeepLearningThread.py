@@ -23,7 +23,8 @@ from PyQt6.QtWidgets import (
     QLineEdit, QSpinBox, QDoubleSpinBox, QSlider, QToolBar,
     QPushButton, QVBoxLayout, QWidget, QLabel, QFileDialog
 )
-from PyQt6.QtCore import Qt
+from PyQt6.QtCore import Qt, QTimer
+import pyqtgraph as pg
 
 sys.path.append('C:/Users/Martin/OneDrive/PhD/AutOT/') # TODO move this to same folder as this file
 
@@ -266,6 +267,76 @@ class DeepLearningAnalyserLDS(Thread):
                 self.c_p['train_new_model'] = False
             
 
+class PlotParticleProfileWidget(QMainWindow):
+    """
+    Helps plot the two particle profiles in real time to compare the z-positions.
+    Will need to update this to make sure that it works properly.
+    
+    """
+
+    def __init__(self, c_p):
+        super().__init__()
+        self.c_p = c_p   # Control parameters
+        self.graphWidget = pg.PlotWidget()
+        self.setCentralWidget(self.graphWidget)
+        self.setWindowTitle('Particle profiles')
+
+        self.image_idx = 0
+        self.filename = "TrappedAndPipetteimage_"
+
+        trappped_center = (200,204) # Placeholder
+        pipette_center = (204,323)
+
+        self.centers = [trappped_center, pipette_center]
+        self.particle_width = 60
+
+        self.x = list(range(100))  # 100 time points
+        self.y = [np.random.normal() for _ in range(100)]  # 100 data points
+        self.y2 = [np.random.normal() for _ in range(100)]
+
+        self.graphWidget.setBackground('w')
+        self.pen1 = pg.mkPen(color=(255, 0, 0))
+        self.data_line1 = self.graphWidget.plot(self.x, self.y, pen=self.pen1)
+
+        self.pen2 = pg.mkPen(color=(0, 255, 0))
+        self.data_line2 = self.graphWidget.plot(self.x, self.y2, pen=self.pen2)
+        
+        self.timer = QTimer()
+        self.timer.setInterval(200)  # Update interval in milliseconds
+        self.timer.timeout.connect(self.update_plot_data)
+        self.timer.start()
+
+
+
+    def update_plot_data(self):
+        if len(self.c_p['predicted_particle_positions']) < 2:
+            return
+
+        self.x = np.linspace(-self.particle_width, self.particle_width, 2*self.particle_width)
+        
+        for idx, pos in enumerate(self.c_p['predicted_particle_positions']):
+
+            if idx>=2:
+                break
+            if idx==0:
+                center_1 = [int(pos[0]), int(pos[1])]
+            else:
+                center_2 = [int(pos[0]), int(pos[1])]
+        # TODO check if the image has the right shape
+        self.y = self.c_p['image'][center_1[1],
+                            center_1[0]-self.particle_width:
+                            center_1[0]+self.particle_width]
+    
+        # TODO set the legend to indicate where the particle is located, also have the software detect which particle is
+        # in the trap and which is not.
+        self.data_line1.setData(self.x, self.y)  # Update the data.
+        self.y2 = self.c_p['image'][center_2[1],
+                            center_2[0]-self.particle_width:
+                            center_2[0]+self.particle_width]
+        self.data_line2.setData(self.x, self.y2)
+
+        # print(F" {np.mean((self.y-self.y2)**2)}")
+
 class DeepLearningControlWidget(QWidget):
     def __init__(self, c_p):
         super().__init__()
@@ -311,6 +382,12 @@ class DeepLearningControlWidget(QWidget):
         self.threshold_slider.setValue(int(self.c_p['cutoff']))
         self.threshold_slider.valueChanged.connect(self.set_threshold)
         self.threshold_slider.setToolTip("Set the threshold for the particle detection")
+
+        self.openParticleProfileButton = QPushButton('Open particle profile')
+        self.openParticleProfileButton.pressed.connect(self.openPlotWindow)
+        self.openParticleProfileButton.setCheckable(False)
+        layout.addWidget(self.openParticleProfileButton)
+
         layout.addWidget(self.threshold_slider)
 
         self.setLayout(layout)
@@ -356,11 +433,9 @@ class DeepLearningControlWidget(QWidget):
     def set_tracking_prescale_factor(self, scale):
         self.c_p['prescale_factor'] = scale
 
-    def set_alpha(self):
-        pass
- 
-    def set_cut_off(self):
-        pass
+    def openPlotWindow(self):
+        self.plotWindow = PlotParticleProfileWidget(self.c_p)
+        self.plotWindow.show()
  
     def train_network(self):
         # TODO make sure one cannot do this while a network is being trained

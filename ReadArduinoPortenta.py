@@ -136,10 +136,24 @@ class PortentaComms(Thread):
         self.calc_quote_fast('Photodiode/PSD SUM A','Photodiode_A','PSD_A_F_sum', chunk_length)
         self.calc_quote_fast('Photodiode/PSD SUM B','Photodiode_B','PSD_B_F_sum', chunk_length)
 
+    def convert_raw_to_true(self, close_sum, far_sum, close_reflection,far_reflection):
+        return (close_sum-far_sum*close_reflection)*far_reflection
+    
+    def calc_true_powers(self, chunk_length):
+        # Compensate for the reflections of the lasers to get the true PSD sum readings ( What we would get if there were no reflections)
+        self.data_channels['PSD_A_F_sum_compensated'].put_data((self.data_channels['PSD_A_F_sum'].get_data(chunk_length) - self.data_channels['PSD_B_F_sum'].get_data(chunk_length)*self.c_p['reflection_B']) * self.c_p['reflection_fac'])
+        self.data_channels['PSD_B_F_sum_compensated'].put_data((self.data_channels['PSD_B_F_sum'].get_data(chunk_length) - self.data_channels['PSD_A_F_sum'].get_data(chunk_length)*self.c_p['reflection_A']) * self.c_p['reflection_fac'])
+
+        # Calculate the laser powers from the PSD readings
+        self.data_channels['Laser_A_power'].put_data(self.data_channels['PSD_A_F_sum_compensated'].get_data(chunk_length)*self.c_p['sum2power_A'])
+        self.data_channels['Laser_B_power'].put_data(self.data_channels['PSD_B_F_sum_compensated'].get_data(chunk_length)*self.c_p['sum2power_B'])
+
     def calc_forces(self, chunk_length):
         # Calculate force and put in data channels
         # TODO may need to do something to make this a bit faster than it is now.
         # Potentially only make the calculations on demand...
+
+        # Calculate the force from the PSD readings
         self.data_channels['F_A_X'].put_data(self.data_channels['PSD_A_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][0])
         self.data_channels['F_A_Y'].put_data(self.data_channels['PSD_A_F_Y'].get_data(chunk_length)*self.c_p['PSD_to_force'][1])
         self.data_channels['F_B_X'].put_data(self.data_channels['PSD_B_F_X'].get_data(chunk_length)*self.c_p['PSD_to_force'][2])
@@ -148,7 +162,7 @@ class PortentaComms(Thread):
         self.data_channels['F_A_Z'].put_data(self.data_channels['Photodiode/PSD SUM A'].get_data(chunk_length)*self.c_p['Photodiode_sum_to_force'][0])
         self.data_channels['F_B_Z'].put_data(self.data_channels['Photodiode/PSD SUM B'].get_data(chunk_length)*self.c_p['Photodiode_sum_to_force'][1])
 
-        self.data_channels['F_total_X'].put_data(self.data_channels['F_A_X'].get_data(chunk_length) + self.data_channels['F_B_X'].get_data(chunk_length))
+        self.data_channels['F_total_X'].put_data(self.data_channels['F_A_X'].get_data(chunk_length) - self.data_channels['F_B_X'].get_data(chunk_length))
         self.data_channels['F_total_Y'].put_data(self.data_channels['F_A_Y'].get_data(chunk_length) + self.data_channels['F_B_Y'].get_data(chunk_length))
         self.data_channels['F_total_Z'].put_data(self.data_channels['F_A_Z'].get_data(chunk_length) + self.data_channels['F_B_Z'].get_data(chunk_length))
 
@@ -178,7 +192,7 @@ class PortentaComms(Thread):
                 return None
         return np.frombuffer(raw_data, dtype=np.uint16) # Immediately does the correct conversion
 
-    def read_data_to_channels_experimental(self, chunk_length=256):
+    def read_data_to_channels(self, chunk_length=256):
         numbers = self.read_data()
         if numbers is None:
             sleep(0.001)
@@ -221,16 +235,18 @@ class PortentaComms(Thread):
         T_time = (high << 16) | low
         self.data_channels['T_time'].put_data(T_time)#((high << 16) | low)
         # Use the first of the time samples of the PSD is roughyl equivalent to the motor time
-        #TODO: This does not appear to be working correctly!
+        #TODO: This does not appear to be working correctly! - Have not seen this problem in  a while so probably fixed.
         # Error appears to have been that the last index of the data is not retrieved correctly. I.e
         #self.data_channels['Motor time'].put_data(self.data_channels['T_time'].get_data_spaced(nbr_chunks,14)) # 14 data points per chunk
         self.data_channels['Motor time'].put_data(T_time[::14]) # 14 data points per chunk
+
+        # Some channels are not read directly from the portenta but are calculated from other channels. Do that here.
         self.calculate_quotes_fast(data_length) # This works but is a bit slow...
+        self.calc_true_powers(data_length)
         self.calc_forces(data_length)
         self.calc_speeds(data_length)
 
     def move_to_location(self):
-        # TODO This should be done in a different thread maybe.
         dist_x = self.c_p['minitweezers_target_pos'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
         dist_y = self.c_p['minitweezers_target_pos'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
         dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
@@ -281,7 +297,7 @@ class PortentaComms(Thread):
             if self.c_p['move_to_location']:
                 self.move_to_location()
             self.send_data_fast()
-            self.read_data_to_channels_experimental()
+            self.read_data_to_channels()
             sleep(1e-4)
 
         if self.serial_channel is not None:

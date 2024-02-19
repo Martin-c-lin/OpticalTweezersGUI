@@ -81,6 +81,7 @@ def default_c_p():
                             'PSD_B_P_X', 'PSD_B_P_Y', 'PSD_B_P_sum',
                             'PSD_B_F_X', 'PSD_B_F_Y', 'PSD_B_F_sum',
                             'Photodiode_A','Photodiode_B',
+                            'message', # Note how this is handled affects what number you get out.
 
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
 
@@ -100,6 +101,12 @@ def default_c_p():
                             'Photodiode_A','Photodiode_B',
                             'T_time','Time_micros_low','Time_micros_high', # Moved this up
                             ],
+
+            'derived_PSD_channels': ['F_A_X','F_A_Y','F_B_X','F_B_Y','F_A_Z','F_B_Z',
+                                     'F_total_X','F_total_Y','F_total_Z',
+                                     'Position_A_X', 'Position_A_Y','Position_B_X','Position_B_Y',
+                                     ],
+
             'save_idx': 0, # Index of the saved data
            # Piezo outputs
            'averaging_interval': 1_000, # How many samples to average over in the data channels window
@@ -108,6 +115,8 @@ def default_c_p():
            'portenta_command_1': 0, # Command to send to the portenta, zero force etc.
            'portenta_command_2': 0, # Command to send to the portenta, dac controls
            'PSD_means':  np.uint16([0,0,0,0]), # Means of the PSD channels
+           'PSD_force_means':  np.array([0,0,0,0]), # Means of the PSD channels
+           'PSD_position_means': np.array([0,0,0,0]), # Means of the PSD channels
 
            # Deep learning tracking
            'network': None,
@@ -173,6 +182,17 @@ def default_c_p():
             'laser_B_current': 330, # Current in mA
             'laser_A_on': False,
             'laser_B_on': False,
+            'reflection_A': 0.0693,
+            'reflection_B': 0.0816,#0.1579,
+            'sum2power_A': 0.00692,
+            'sum2power_B': 0.00682,
+            'reflection_fac': 1.0057, #1.0111, # Factor relatets to the compensation when calculating the true sum readings.
+
+            # Pump parameters
+            'pump_adress': 'COM3',
+            'target_pressures': np.array([0.0, 0.0 , 0.0, 0.0]),
+            'current_pressures': np.array([0.0, 0.0 , 0.0, 0.0]),
+
 
            # Minitweezers motors
            'motor_x_target_speed': 0,
@@ -223,14 +243,15 @@ def default_c_p():
 
 from dataclasses import dataclass
 # TODO have the max_len be a tunable parameter for configuration.
-
+# TODO implement a custom return funciton for the "derived" channels, i.e the ones which are calculated from other channels.
+# TODO have sampling rate as a parameter for the data channels.
 @dataclass
 class DataChannel:
     name: str
     unit: str
     data: np.array
     saving_toggled: bool = True
-    max_len: int = 100_000_000 # 10_000_000 default
+    max_len: int = 10_000_000 # 10_000_000 default
     index: int = 0
     full: bool = False
     max_retrivable: int = 1 # number of datapoints which have been saved.
@@ -385,14 +406,18 @@ def get_data_dicitonary_new():
     ['PSD_A_F_X', 'bits'],
     ['PSD_A_F_Y','bits'],
     ['PSD_A_F_sum','bits'],
+    ['PSD_A_F_sum_compensated','bits'],
     ['PSD_B_P_X', 'bits'],
     ['PSD_B_P_Y','bits'],
     ['PSD_B_P_sum','bits'],
     ['PSD_B_F_X', 'bits'],
     ['PSD_B_F_Y','bits'],
     ['PSD_B_F_sum','bits'],
+    ['PSD_B_F_sum_compensated','bits'],
     ['Photodiode_A','bits'],
     ['Photodiode_B','bits'],
+    ['Laser_A_power','mW'],
+    ['Laser_B_power','mW'],
     ['T_time','microseconds'], # Time measured on the controller
     ['Time_micros_high','microseconds'],
     ['Time_micros_low','microseconds'],

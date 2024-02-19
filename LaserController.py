@@ -19,18 +19,30 @@ class LaserControllerThread(Thread):
         self.setDaemon(True)
         self.c_p = c_p
 
-laser_powers = [
-    [124,130],
-    [174,174],
-    [224,224],
-    [274,274],
-    [330,310],
-    [274,274],
-    [224,224],
-    [174,174],
-    [124,130],
-]
+# Laser powers to be used in the RBC experiment
 
+# EG currents not powers
+laser_powers = [ 
+    [86,84,10],
+    [98,96,5],
+    [86,84,10],
+    [116,114,5],
+    [86,84,10],
+    [155,148,5],
+    [86,84,10],
+    [195,180,5], # 60
+    [86,84,10],
+    [237,217,5], # 80
+    [86,84,20],
+    #[279,250], # 100 mW often damages the cells   
+]
+"""
+laser_powers = [ 
+    [86,84,10],
+    [237,217,5], # 80
+    [86,84,10],   
+]
+"""
 class LaserControllerWidget(QWidget):
 
     def __init__(self, c_p, OT_GUI):
@@ -63,7 +75,7 @@ class LaserControllerWidget(QWidget):
         self.experiment_running = False
         self.experiment_started = False
         self.snapshot_taken = False
-        self.time_interval = 5
+        self.time_interval = 10 # Decrease?
 
 
         self.initUI()
@@ -102,14 +114,15 @@ class LaserControllerWidget(QWidget):
     def set_currents_for_RBC(self):
         self.current_A_edit_val = int(laser_powers[self.experiment_idx][0])
         self.current_B_edit_val = int(laser_powers[self.experiment_idx][1])
-        self.laserA_CurrentEdit.setText(str(self.current_A_edit_val))
-        self.laserB_CurrentEdit.setText(str(self.current_B_edit_val))
+        self.time_interval = int(laser_powers[self.experiment_idx][2])
+
+        self.laserA_CurrentEdit.setValue(int(self.current_A_edit_val))
+        self.laserB_CurrentEdit.setValue(int(self.current_B_edit_val))
         self.set_laser_A_current()
         self.set_laser_B_current()
         sleep(0.05)
 
     def RBC_auto_experiment(self):
-        #print(f'Timer triggered as it should, time is {round(time()-self.experiment_start_time,1)}')
         if not self.experiment_running:
             if self.experiment_started:
                 self.stop_data_recording()
@@ -174,14 +187,6 @@ class LaserControllerWidget(QWidget):
         self.laserA_CurrentEdit.setRange(0, 400)
         self.laserA_CurrentEdit.setValue(self.c_p['laser_A_current'])
         self.laserA_CurrentEdit.valueChanged.connect(self.tempCurrentA)
-
-        """
-        # Create lineedit for current
-        self.laserA_CurrentEdit = QLineEdit()
-        self.laserA_CurrentEdit.setValidator(QIntValidator(0,400))
-        self.laserA_CurrentEdit.setText(str(self.c_p['laser_A_current']))
-        self.laserA_CurrentEdit.textChanged.connect(self.tempCurrentA)
-        """
         self.currentA_layout.addWidget(self.laserA_CurrentEdit)
 
         self.setCurrentButton = QPushButton("Set current", self)
@@ -216,16 +221,6 @@ class LaserControllerWidget(QWidget):
         self.laserB_CurrentEdit.setRange(0, 400)
         self.laserB_CurrentEdit.setValue(self.c_p['laser_B_current'])
         self.laserB_CurrentEdit.valueChanged.connect(self.tempCurrentB)
-
-        """
-        # Create lineedit for current
-
-        self.laserB_CurrentEdit = QLineEdit()
-        self.laserB_CurrentEdit.setValidator(QIntValidator(0,400))
-        self.laserB_CurrentEdit.setText(str(self.c_p['laser_B_current']))
-        self.laserB_CurrentEdit.textChanged.connect(self.tempCurrentB)
-        """
-        
         self.currentB_layout.addWidget(self.laserB_CurrentEdit)
         
         self.setCurrentButton = QPushButton("Set current", self)
@@ -369,19 +364,6 @@ class LaserControllerWidget(QWidget):
             self.onOffB_btn.setText("Turn OFF")
             self.laser_B_ser.write(b"LR\r")
             self.c_p['laser_B_on'] = True
-    """
-    def start_laser(self, laser):
-        if laser == 'A':
-            self.laser_A_ser.write(b"LR\r")
-        elif laser == 'B':
-            self.laser_B_ser.write(b"LR\r")
-    
-    def stop_laser(self, laser):
-        if laser == 'A':
-            self.laser_A_ser.write(b"LS\r")
-        elif laser == 'B':
-            self.laser_B_ser.write(b"LS\r")
-    """
 
     def disconnect_laser(self, laser):
         if laser == 'A' and self.laser_A_ser is not None:
@@ -431,7 +413,7 @@ class LaserControllerToolbar(QWidget):
         self.experiment_running = False
         self.experiment_started = False
         self.snapshot_taken = False
-        self.time_interval = 5
+        self.time_interval = 10
 
 
         self.initUI()
@@ -470,8 +452,8 @@ class LaserControllerToolbar(QWidget):
     def set_currents_for_RBC(self):
         self.current_A_edit_val = int(laser_powers[self.experiment_idx][0])
         self.current_B_edit_val = int(laser_powers[self.experiment_idx][1])
-        self.laserA_CurrentEdit.setText(str(self.current_A_edit_val))
-        self.laserB_CurrentEdit.setText(str(self.current_B_edit_val))
+        self.laserA_CurrentEdit.setValue(int(self.current_A_edit_val))
+        self.laserB_CurrentEdit.setValue(int(self.current_B_edit_val))
         self.set_laser_A_current()
         self.set_laser_B_current()
         sleep(0.05)
@@ -505,7 +487,7 @@ class LaserControllerToolbar(QWidget):
                 self.snapshot_taken = True
 
             if dt > self.time_interval:
-                print(f"Stopped recording data{dt}\n {self.experiment_idx}")
+                print(f"Stopped recording data {dt}\n {self.experiment_idx} powers {laser_powers[self.experiment_idx]}")
                 self.stop_data_recording()
                 self.current_power_start_time = time()
                 self.experiment_idx += 1
@@ -543,13 +525,6 @@ class LaserControllerToolbar(QWidget):
         self.laserA_CurrentEdit.setValue(self.c_p['laser_A_current'])
         self.laserA_CurrentEdit.valueChanged.connect(self.tempCurrentA)
 
-        """
-        # Create lineedit for current
-        self.laserA_CurrentEdit = QLineEdit()
-        self.laserA_CurrentEdit.setValidator(QIntValidator(0,400))
-        self.laserA_CurrentEdit.setText(str(self.c_p['laser_A_current']))
-        self.laserA_CurrentEdit.textChanged.connect(self.tempCurrentA)
-        """
         self.currentA_layout.addWidget(self.laserA_CurrentEdit)
 
         self.setCurrentButton = QPushButton("Set current", self)
@@ -585,15 +560,6 @@ class LaserControllerToolbar(QWidget):
         self.laserB_CurrentEdit.setValue(self.c_p['laser_B_current'])
         self.laserB_CurrentEdit.valueChanged.connect(self.tempCurrentB)
 
-        """
-        # Create lineedit for current
-
-        self.laserB_CurrentEdit = QLineEdit()
-        self.laserB_CurrentEdit.setValidator(QIntValidator(0,400))
-        self.laserB_CurrentEdit.setText(str(self.c_p['laser_B_current']))
-        self.laserB_CurrentEdit.textChanged.connect(self.tempCurrentB)
-        """
-        
         self.currentB_layout.addWidget(self.laserB_CurrentEdit)
         
         self.setCurrentButton = QPushButton("Set current", self)
@@ -737,19 +703,6 @@ class LaserControllerToolbar(QWidget):
             self.onOffB_btn.setText("Turn OFF")
             self.laser_B_ser.write(b"LR\r")
             self.c_p['laser_B_on'] = True
-    """
-    def start_laser(self, laser):
-        if laser == 'A':
-            self.laser_A_ser.write(b"LR\r")
-        elif laser == 'B':
-            self.laser_B_ser.write(b"LR\r")
-    
-    def stop_laser(self, laser):
-        if laser == 'A':
-            self.laser_A_ser.write(b"LS\r")
-        elif laser == 'B':
-            self.laser_B_ser.write(b"LS\r")
-    """
 
     def disconnect_laser(self, laser):
         if laser == 'A' and self.laser_A_ser is not None:
