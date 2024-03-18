@@ -71,6 +71,53 @@ def get_x_y(counts, particle_upper_size_threshold, particle_size_threshold,
             y.append(cy)
     return x, y
 
+def find_particle_centers_fast(image, threshold=120, particle_size_threshold=200,
+                          particle_upper_size_threshold=5000, bright_particle=True,
+                          fill_holes=False, check_circular=False):
+    """
+    Function which locates particle centers using OpenCV's connectedComponentsWithStats.
+    
+    Parameters:
+        image: Image with the particles.
+        threshold: Threshold value of the particle.
+        particle_size_threshold: Minimum area of particle in image measured in pixels.
+        particle_upper_size_threshold: Maximum area of particle in image measured in pixels.
+        bright_particle: If the particle is brighter than the background or not.
+        fill_holes: If true, fills holes in binary objects.
+        check_circular: If true, checks if the object is circular (not implemented in this version).
+        
+    Returns:
+        x, y: Arrays with the x and y coordinates of the particle in the image in pixels.
+              Returns empty arrays if no particle was found.
+        thresholded_image: The binary image after thresholding.
+    """
+    # Blur and threshold the image
+    blurred_image = cv2.blur(image, (8, 8))
+    ret, thresholded_image = cv2.threshold(blurred_image, threshold, 255, cv2.THRESH_BINARY if bright_particle else cv2.THRESH_BINARY_INV)
+    
+    if fill_holes:
+        # Morphological operation to fill holes
+        contour, hier = cv2.findContours(thresholded_image, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        for cnt in contour:
+            cv2.drawContours(thresholded_image, [cnt], 0, 255, -1)
+    
+    # Use connectedComponentsWithStats to find particles
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(thresholded_image.astype(np.uint8), connectivity=8)
+
+    x = []
+    y = []
+
+    for i in range(1, num_labels):  # Skipping the first label as it's the background
+        area = stats[i, cv2.CC_STAT_AREA]
+        if particle_size_threshold < area < particle_upper_size_threshold:
+            # Valid particle, get its center
+            cx, cy = centroids[i]
+            # Circular check would go here, but it requires a custom implementation
+            x.append(cx)
+            y.append(cy)
+
+    return np.array(x), np.array(y), thresholded_image
+
 #@jit
 def find_particle_centers(image,threshold=120, particle_size_threshold=200,
                         particle_upper_size_threshold=5000,
@@ -107,6 +154,7 @@ def find_particle_centers(image,threshold=120, particle_size_threshold=200,
     for group, pixel_count in enumerate(counts): # First will be background
         if particle_upper_size_threshold>pixel_count>particle_size_threshold:
             # Particle found, locate center of mass of the particle
+            # TODO here we should really use the brighness weighted center of mass, not just the center of mass
             cy, cx = ndi.center_of_mass(separate_particles_image==group) # This is slow
             if check_circular:
                 M = measure.moments_central(separate_particles_image==group, order=2)

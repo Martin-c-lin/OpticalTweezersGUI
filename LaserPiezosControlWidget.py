@@ -218,7 +218,7 @@ class LaserPiezoWidget(QWidget):
             print('toggling autoalign of trap A')
             self.autoalign_B.setChecked(False)   
         else:
-            # TODO use a mean of the last 10 or so points instead f the last point
+            # TODO use a mean of the last 10 or so points instead of the last point
             self.c_p['piezo_A'] = np.int32([self.data_channels['dac_ax'].get_data_spaced(1)[0],
                                             self.data_channels['dac_ay'].get_data_spaced(1)[0]])
             self.c_p['piezo_B'] = np.int32([self.data_channels['dac_bx'].get_data_spaced(1)[0],

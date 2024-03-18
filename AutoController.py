@@ -196,6 +196,19 @@ class AutoControlWidget(QWidget):
         layout.addWidget(QLabel("EP duration:"))
         layout.addWidget(self.EP_duration_spinbox)
 
+        self.z_focus_button = QPushButton('Toggle z focus')
+        self.z_focus_button.pressed.connect(self.toggle_z_focus_pipette_trapped)
+        self.z_focus_button.setCheckable(True)
+        self.z_focus_button.setToolTip("Toggles the z focus on the pipette. \n This is used to match the focus of the trapped particle with that in the pipette.")
+        self.z_focus_button.setChecked(self.c_p['focus_z_trap_pipette'])
+        layout.addWidget(self.z_focus_button)
+
+        self.move2area_above_button = QPushButton('Move to area above pipette')
+        self.move2area_above_button.pressed.connect(self.move2area_above)
+        self.move2area_above_button.setToolTip("Moves the pipette to the area above the pipette. \n Position the particle roughly above the pipette, primarily used in testing.")
+        self.move2area_above_button.setCheckable(True)
+        layout.addWidget(self.move2area_above_button)
+
         self.setLayout(layout)
 
     def toggle_EP(self):
@@ -211,18 +224,20 @@ class AutoControlWidget(QWidget):
             self.c_p['electrostatic_protocol_finished'] = False
         print("Toggled EP to ", self.c_p['electrostatic_protocol_toggled'], self.EP_toggled_button.isChecked())
     
+    def toggle_z_focus_pipette_trapped(self):
+        self.c_p['focus_z_trap_pipette'] = not self.c_p['focus_z_trap_pipette']
+        self.z_focus_button.setChecked(self.c_p['focus_z_trap_pipette'])  
+
+    def move2area_above(self):
+        self.c_p['move2area_above_pipette'] = not self.c_p['move2area_above_pipette']
+        self.move2area_above_button.setChecked(self.c_p['move2area_above_pipette'])
+
     def update_EP_start(self):
         val = int(self.EP_start_spinbox.value())
-        # if val > self.c_p['electrostatic_protocol_end']:
-        #     self.EP_start_spinbox.setValue(self.c_p['electrostatic_protocol_start'])
-        #    return
         self.c_p['electrostatic_protocol_start'] = val
 
     def update_EP_end(self):
         val = int(self.EP_end_spinbox.value())
-        # if val < self.c_p['electrostatic_protocol_start']:
-        #     self.EP_end_spinbox.setValue(self.c_p['electrostatic_protocol_end'])
-        #     return
         self.c_p['electrostatic_protocol_end'] = val
 
     def update_EP_step(self):
@@ -271,7 +286,7 @@ class AutoControlWidget(QWidget):
         if self.c_p['center_pipette']:
             self.c_p['pipette_located'] = False
         else:
-            self.c_p['locate_pippette'] = False
+            self.c_p['locate_pipette'] = False
             self.c_p['move_to_location'] = False
 
     def set_pippette_location_chamber(self):
@@ -302,21 +317,34 @@ class SelectLaserPosition(MouseInterface):
     def __init__(self, c_p):
         self.c_p = c_p
         self.pen = QtGui.QPen(QtGui.QColor(0, 255, 0))
+        self.pen2 = QtGui.QPen(QtGui.QColor(255, 0, 0))
 
     def draw(self, qp):
         qp.setPen(self.pen)
-        # TODO check where image scale parameter should be applied
+        # TODO check where image scale parameter should be applied self.c_p['laser_position_B_predicted']
         r = 10
-        x = int((self.c_p['laser_position'][0] - self.c_p['AOI'][0]) / self.c_p['image_scale'] - r/2)
-        y = int((self.c_p['laser_position'][1] - self.c_p['AOI'][2]) / self.c_p['image_scale'] - r/2)
+        x = int((self.c_p['laser_position_A_predicted'][0] - self.c_p['AOI'][0]) / self.c_p['image_scale'] - r/2)
+        y = int((self.c_p['laser_position_A_predicted'][1] - self.c_p['AOI'][2]) / self.c_p['image_scale'] - r/2)
+        qp.drawEllipse(x,y, r, r)
+
+        qp.setPen(self.pen2)
+        x = int((self.c_p['laser_position_B_predicted'][0] - self.c_p['AOI'][0]) / self.c_p['image_scale'] - r/2)
+        y = int((self.c_p['laser_position_B_predicted'][1] - self.c_p['AOI'][2]) / self.c_p['image_scale'] - r/2)
         qp.drawEllipse(x,y, r, r)
 
     def mousePress(self):
+        # TODO also set 0 position of the position lasers.
         if self.c_p['mouse_params'][0] == 1:
-            self.c_p['laser_position'] = np.array(self.c_p['mouse_params'][1:3])*self.c_p['image_scale']
-            self.c_p['laser_position'][0] += self.c_p['AOI'][0]
-            self.c_p['laser_position'][1] += self.c_p['AOI'][2]
-            print("Laser position set to: ", self.c_p['laser_position'])
+            self.c_p['laser_position_A'] = np.array(self.c_p['mouse_params'][1:3])*self.c_p['image_scale']
+            self.c_p['laser_position_A'][0] += self.c_p['AOI'][0]
+            self.c_p['laser_position_A'][1] += self.c_p['AOI'][2]
+            print("Laser A position set to: ", self.c_p['laser_position_A'])
+        elif self.c_p['mouse_params'][0] == 2:
+            self.c_p['laser_position_B'] = np.array(self.c_p['mouse_params'][1:3])*self.c_p['image_scale']
+            self.c_p['laser_position_B'][0] += self.c_p['AOI'][0]
+            self.c_p['laser_position_B'][1] += self.c_p['AOI'][2]
+            print("Laser B position set to: ", self.c_p['laser_position_A'])
+
     def mouseRelease(self):
         pass
     def mouseDoubleClick(self):
@@ -347,6 +375,7 @@ class autoControllerThread(Thread):
         self.closest_distance = 70
         self.sleep_counter = 0
         self.force_limit = 30
+        self.last_move_time = 0
   
         # Parameters for the electrostatic protocol experiments
 
@@ -355,7 +384,7 @@ class autoControllerThread(Thread):
         # center_pipette - Should the pipette be centered close to the laser position?
         # 
 
-
+    """
     def find_closest_particle(self, center):
         if len(self.c_p['predicted_particle_positions']) == 0:
             return None
@@ -363,7 +392,7 @@ class autoControllerThread(Thread):
         # Find particle closest to the center
         distances = [(x-center[1])**2+(y-center[0])**2 for x,y in self.c_p['predicted_particle_positions']] # Error with axis before
         return np.argmin(distances)
-
+    """
     def move_while_avoiding_particles(self):
         """
         Function that moves the stage while avoiding double trapping particles. 
@@ -455,13 +484,7 @@ class autoControllerThread(Thread):
         sleep(0.2)
 
     def center_particle(self, center, move_limit=10):
-
-        #if len(self.c_p['predicted_particle_positions']) == 0:
-        #    return
-
         # Find particle closest to the center
-        # distances = [(x-center[1])**2+(y-center[0])**2 for x,y in self.c_p['predicted_particle_positions']] # Error with axis before
-        #center_particle = np.argmin(distances)
 
         center_particle = self.find_closest_particle(center)
         if center_particle is None:
@@ -546,8 +569,6 @@ class autoControllerThread(Thread):
     def center_pipette(self, offset_pixels = 20):
         """
         In the long run this will need to be done also with the path search to avoid bumping the particles into the pipette.
-
-        
         """
         
         dx = self.c_p['pipette_location_chamber'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
@@ -560,8 +581,8 @@ class autoControllerThread(Thread):
             self.c_p['center_pipette'] = False
             return
         
-        if not self.c_p['locate_pippette']:
-            self.c_p['locate_pippette'] = True
+        if not self.c_p['locate_pipette']:
+            self.c_p['locate_pipette'] = True
             print("Locating pipette in image")
             sleep(0.2)
         # Check it's location in the frame and that we actually have a pipette to move to. 
@@ -588,7 +609,7 @@ class autoControllerThread(Thread):
     def check_trapped(self, threshold=10_000):
         # TODO threshold is a bit big I think.
         # TODO does not work when zoomed in
-        if len(self.c_p['predicted_particle_positions'])<1:
+        if len(self.c_p['predicted_particle_positions']) < 1:
             self.particles_in_view = False
             return False
         self.particles_in_view = True
@@ -596,7 +617,42 @@ class autoControllerThread(Thread):
         LX = self.c_p['laser_position'][0] - self.c_p['AOI'][0]
         LY = self.c_p['laser_position'][1] - self.c_p['AOI'][2]
         distances = [(x-LX)**2+(y-LY)**2 for x,y in self.c_p['predicted_particle_positions']]
+        self.c_p['Trapped_particle_position'][0:2], idx = self.find_closest_particle([LX, LY],True)
+
+        # Check if we can get also the z-position, different units tough. Set to None if no z-position found.
+        if self.c_p['z-tracking']:
+            try:
+                self.c_p['Trapped_particle_position'][2] = self.c_p['z-predictions'][idx]
+            except IndexError as ie:
+                print("Index error in z-predictions")
+                self.c_p['Trapped_particle_position'][2] = None
+        else:
+            self.c_p['Trapped_particle_position'][2] = None
         return min(distances) < threshold
+    
+    def check_in_pipette(self, threshold=20_000, offset=np.array([0, 50])):
+        if not self.c_p['pipette_located'] or not self.c_p['tracking_on'] or self.c_p['pipette_location'] is None:
+            return
+        try:
+            potential_pos, idx = self.find_closest_particle(np.array(self.c_p['pipette_location']) - offset, True) # Take into account that particle is above the pipette
+        except TypeError as te:
+            print("Error in finding closest particle to pipette", te)
+            return
+        if potential_pos is None:
+            return
+        if (self.c_p['pipette_location'][0] - potential_pos[0])**2 + (self.c_p['pipette_location'][1] - potential_pos[1])**2 < threshold:
+            self.c_p['particle_in_pipette'] = True
+            self.c_p['pipette_particle_location'][0:2] = potential_pos
+            try:
+                if self.c_p['z-tracking']:
+                    self.c_p['pipette_particle_location'][2] = self.c_p['z-predictions'][idx]
+                else:
+                    self.c_p['pipette_particle_location'][2] = None
+            except IndexError as ie:
+                self.c_p['pipette_particle_location'][2] = None
+
+        else:
+            self.c_p['particle_in_pipette'] = False
 
     def look_for_particles(self):
         if len(self.c_p['predicted_particle_positions']) > 0:
@@ -678,6 +734,8 @@ class autoControllerThread(Thread):
         
 
     def find_true_laser_position(self):
+
+        # TODO update approximation to use also the reading of the position PSDs
         if not self.check_trapped() or not self.c_p['tracking_on']:
             print("No particles detected close enough to current laser position")
             return
@@ -685,56 +743,99 @@ class autoControllerThread(Thread):
         LY = self.c_p['laser_position'][1] - self.c_p['AOI'][2]
 
         min_pos = self.find_closest_particle([LX, LY])
-        #min_x = 1000
-        #min_dist = 2e10
-        #min_y = 1000
-        #for x,y in self.c_p['predicted_particle_positions']:
-        #    if (x-LX)**2+(y-LY)**2<min_dist:
-        #        min_dist = (x-LX)**2+(y-LY)**2
-        #        min_x = x
-        #        min_y = y
+
         self.c_p['laser_position'] = [min_pos[0]+self.c_p['AOI'][0], min_pos[1]+self.c_p['AOI'][2]]
         print("Laser position set to: ", self.c_p['laser_position'])
 
-    def find_closest_particle(self,reference_position):
+    def find_closest_particle(self, reference_position, return_idx):
         try:
             LX = reference_position[0]
             LY = reference_position[1]
             min_x = 1000
             min_dist = 2e10
             min_y = 1000
+            idx = 0
+            min_idx = 0
             for x,y in self.c_p['predicted_particle_positions']:
+
                 if (x-LX)**2+(y-LY)**2<min_dist:
                     min_dist = (x-LX)**2+(y-LY)**2
                     min_x = x
                     min_y = y
+                    min_idx = idx
+                idx += 1
+            if return_idx:
+                return [min_x, min_y], min_idx
             return [min_x, min_y]
         except Exception as e:
             return None
         
-    def find_particle_in_pippette(self, offset=0):
-        if not self.c_p['tracking_on'] and self.c_p['locate_pippette'] and self.c_p['pipette_located']:
-            return # Need to have the trackings turned on to do this 
+    def move2area_above_pipette(self, offset_y = 170):
+        """
+        Moves the motors to be centered above the particle in the pipette.
+        
+        """
+        if not self.c_p['pipette_located'] or not self.c_p['particle_in_pipette'] or self.c_p['move_to_location']:# or not self.c_p['']:
+            return False
+        
+        dx = self.c_p['pipette_particle_location'][0] - (self.c_p['laser_position'][0] - self.c_p['AOI'][0])
+        dy = (self.c_p['pipette_particle_location'][1] - offset_y) - (self.c_p['laser_position'][1] - self.c_p['AOI'][2])
+        num = 1.4
+        if dx**2+dy**2<2000:
+            print("In position")
+            self.move_finsih = True
+            # self.move_time_updated = False
+            return True
+        if time() - self.last_move_time < 3:
+            return False
+
+        # Move the stage
+        self.c_p['minitweezers_target_pos'][1] = int(self.data_channels['Motor_y_pos'].get_data(1)[0] - dy*self.c_p['ticks_per_pixel']/num)
+        if (dy*self.c_p['ticks_per_pixel'])**2 < 200:
+            self.c_p['minitweezers_target_pos'][0] = int(self.data_channels['Motor_x_pos'].get_data(1)[0] + dx*self.c_p['ticks_per_pixel']/num)
+        print(self.c_p['minitweezers_target_pos'], dx, dy)
+        self.last_move_time = time()
+        self.c_p['move_to_location'] = True
+
+    def z_focus(self):
+        """
+        Operational idea:
+            The system compares the position of the particle in the trap
+            to the particle in the pipette. For this we need to know the approximate laser position
+            as well as the position of the pipette. The laser position should be ...
+        
+        return:
+            True if the system has reached the correct z-position
+            False if the system needs to move further or no z-position was found.
+        """
+
+        # DO ininital checks to ensure we are set-up for this
+        if not self.c_p['tracking_on'] and self.c_p['z-tracking']:
+            return False
         if len(self.c_p['predicted_particle_positions']) == 0:
-            return
-        if self.c_p['pipette_location'] is None or self.c_p['pipette_location'][1] is None:
-            return
-        min_pos = self.find_closest_particle([self.c_p['pipette_location'][0],self.c_p['pipette_location'][1]-offset])
-        if min_pos is None:
-            return
-        dx = (min_pos[0]-self.c_p['pipette_location'][0])
-        dy = (min_pos[1]-self.c_p['pipette_location'][1])
-        if dx**2> 1000:
-            print("Particle too far away from pipette", dx, dy, min_pos)
-            return
-        if dy**2> 10_000:
-            print("Particle too far away from pipette", dx, dy, min_pos)
-            return
-        return min_pos
-    
+            return False
+        
+        # Find z-position of particle in pipette
+        if self.c_p['Trapped_particle_position'][2] is None or self.c_p['pipette_particle_location'][2] is None:
+            return False
+        dz = -10*(self.c_p['Trapped_particle_position'][2] - self.c_p['pipette_particle_location'][2]) # Puts it to a reasonable scale.
+        # Move the stage towards the correct position
+        # TODO check if feedback is correct direction.
+        print(f"Time to move. {dz},{self.c_p['Trapped_particle_position'][2] },{self.c_p['pipette_particle_location'][2]}")
+        if dz**2<2:
+            return True
+        if dz > 0:
+            self.c_p['minitweezers_target_pos'][2] = int(self.data_channels['Motor_z_pos'].get_data(1)[0] + 3)
+        if dz < 0:
+            self.c_p['minitweezers_target_pos'][2] = int(self.data_channels['Motor_z_pos'].get_data(1)[0] - 3)
+
+        self.c_p['move_to_location'] = True
+        return False
+        
+
     def attach_DNA(self):
         # Check that the two necessary particles are in view, someitmes the bead in the pipette is misstaken for part of the pipette, thereof the offset.
-        pipette_particle = self.find_particle_in_pippette(offset=0)
+        pipette_particle, _ = self.find_particle_in_pippette(offset=0)
         if pipette_particle is None:
             print("No particle in pipette")
             return
@@ -797,11 +898,31 @@ class autoControllerThread(Thread):
                 self.DNA_move_direction = 0
                 return
         # 
+            
+    def update_lasers_position_from_PSDs(self):
+        """
+        Estimates the laser positions based on the psd readings. Assumes that the laser_position_A and laser_position_B are correct and set to
+        while the PSD_position_reading was 0.        
+        """
+        psd_a_x = np.mean(self.data_channels['PSD_A_P_X'].get_data(10))
+        psd_a_y = np.mean(self.data_channels['PSD_A_P_Y'].get_data(10))
+        psd_b_x = np.mean(self.data_channels['PSD_B_P_X'].get_data(10))
+        psd_b_y = np.mean(self.data_channels['PSD_B_P_Y'].get_data(10))
+        laser_a_x = self.c_p['laser_position_A'][0] + (self.c_p['laser_a_transfer_matrix'][0] * psd_a_x + self.c_p['laser_a_transfer_matrix'][1] * psd_a_y)/self.c_p['microns_per_pix']
+        laser_a_y = self.c_p['laser_position_A'][1] + (self.c_p['laser_a_transfer_matrix'][2] * psd_a_x + self.c_p['laser_a_transfer_matrix'][3] * psd_a_y)/self.c_p['microns_per_pix']
+
+        laser_b_x = self.c_p['laser_position_B'][0] + (self.c_p['laser_b_transfer_matrix'][0] * psd_b_x + self.c_p['laser_b_transfer_matrix'][1] * psd_b_y)/self.c_p['microns_per_pix']
+        laser_b_y = self.c_p['laser_position_B'][1] + (self.c_p['laser_b_transfer_matrix'][2] * psd_b_x + self.c_p['laser_b_transfer_matrix'][3] * psd_b_y)/self.c_p['microns_per_pix']
+        self.c_p['laser_position_A_predicted'] = np.array([laser_a_x, laser_a_y])
+        self.c_p['laser_position_B_predicted'] = np.array([laser_b_x, laser_b_y])
+
+        self.c_p['laser_position'] = (self.c_p['laser_position_A_predicted'] + self.c_p['laser_position_B_predicted'])/2
 
     def run(self):
 
         while self.c_p['program_running']:
             trapped = self.check_trapped()
+            self.check_in_pipette()
             if self.c_p['centering_on']:
                 center = [np.shape(self.c_p['image'])[0]/2, np.shape(self.c_p['image'])[1]/2]
                 #self.center_particle(center)
@@ -827,5 +948,40 @@ class autoControllerThread(Thread):
             elif self.c_p['attach_DNA_automatically']:
                 self.attach_DNA()
 
+            elif self.c_p['move2area_above_pipette']:
+                 if self.move2area_above_pipette():
+                    self.c_p['move2area_above_pipette'] = False
+
+            if self.c_p['focus_z_trap_pipette']:
+                if self.z_focus():
+                    self.c_p['focus_z_trap_pipette'] = False
             self.data_channels['particle_trapped'].put_data(trapped)
+            self.update_lasers_position_from_PSDs()
             sleep(0.1)
+
+
+
+
+
+    def find_particle_in_pippette(self, offset=0):
+        if not self.c_p['tracking_on'] and self.c_p['locate_pipette'] and self.c_p['pipette_located']:
+            return # Need to have the trackings turned on to do this 
+        if len(self.c_p['predicted_particle_positions']) == 0:
+            return
+        if self.c_p['pipette_location'] is None or self.c_p['pipette_location'][1] is None:
+            return
+
+        min_pos, idx = self.find_closest_particle([self.c_p['pipette_location'][0],self.c_p['pipette_location'][1]-offset],
+                                                  return_idx=True)
+        if min_pos is None:
+            return
+
+        dx = (min_pos[0]-self.c_p['pipette_location'][0])
+        dy = (min_pos[1]-self.c_p['pipette_location'][1])
+        if dx**2> 1000:
+            print("Particle too far away from pipette", dx, dy, min_pos)
+            return
+        if dy**2> 10_000:
+            print("Particle too far away from pipette", dx, dy, min_pos)
+            return
+        return min_pos, idx

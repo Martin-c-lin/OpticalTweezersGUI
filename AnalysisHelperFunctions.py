@@ -3,7 +3,18 @@ import sys
 import matplotlib.pyplot as plt
 from scipy.signal import resample, correlate, find_peaks
 from scipy.interpolate import interp1d
+import cv2
+import find_particle_threshold as fpt
+from unet_model import UNet
+from CameraControlsNew import npy_generator
+import matplotlib as mpl
 
+import torch
+import numpy as np
+import scipy.ndimage as ndi
+from skimage import measure
+
+sys.path.append("../NetworkTraining/")
 
 ticks_per_pixel = 0.3 # Should recalibrate this!
 microns_per_pixel = 1/18.28
@@ -19,6 +30,166 @@ This script contains useful functions for analyzing the data from the optical tw
 Can help with correlating the data from the PSDs and the camera.
 
 """
+
+def track_video(video_path, model,fac,threshold=150,format='npy',frame_limit=-1):
+    x_pos = []
+    y_pos = []
+    r_meas = []
+    if format == 'npy':
+        generator = npy_generator(video_path)
+    elif format =="avi":
+        generator = avi_frame_generator(video_path)
+    for idx,image in enumerate(generator):
+        if image is None:
+            break
+        if frame_limit>0 and idx>frame_limit:
+            break
+        if idx%100==0:
+            print(idx)
+        x,y,ret  = get_torch_prediction(model,image,fac=fac,threshold=threshold)
+        xt,yt,r,_ = find_particle_radii(ret,threshold=threshold)
+
+        r_meas.append(fac*np.array(r))
+        x_pos.append(fac*np.array(x))
+        y_pos.append(fac*np.array(y))
+    y_microns = np.transpose(np.array(y_pos))*microns_per_pixel
+    x_microns = np.transpose(np.array(x_pos))*microns_per_pixel
+    r_microns = np.transpose(np.array(r_meas))*microns_per_pixel
+    return x_microns, y_microns, r_microns
+
+def convert_to_absolute_position(data, offset_Y):
+    PSD_TO_POS =  [14.252,14.252]#[14.252,12.62]
+    AY = data['PSD_A_P_Y']/data['PSD_A_P_sum']*PSD_TO_POS[0]
+    BY = data['PSD_B_P_Y']/data['PSD_B_P_sum']*PSD_TO_POS[1]
+
+    AX = data['PSD_A_P_X']/data['PSD_A_P_sum']*PSD_TO_POS[0]
+    BX = data['PSD_B_P_X']/data['PSD_B_P_sum']*PSD_TO_POS[1]
+
+    AY -= np.mean(AY[:2000]) - offset_Y
+    BY -= np.mean(BY[:2000]) - offset_Y
+
+    return AY,BY, (AY+BY)/2
+
+def calc_Y_force(data):
+    PSD_to_force = [0.02505,0.02565,0.02755,0.0287]
+    AY = data['PSD_A_F_Y']*PSD_to_force[1]
+    BY = data['PSD_B_F_Y']*PSD_to_force[3]
+    return -(AY+BY)
+
+
+def get_laser_pos_force(data_path,video_path,fac=1.4, threshold=30):
+    x_cam, y_cam, r = track_video(video_path, model,fac,threshold,format='npy',frame_limit=12)
+    data = np.load(data_path, allow_pickle=True)
+    offset_Y = np.mean(y_cam[1,:10])-np.mean(y_cam[0,:10])
+    AY,BY,mean_Y = convert_to_absolute_position(data, offset_Y)
+    force_y = calc_Y_force(data)
+    return mean_Y, force_y,x_cam, y_cam,data
+
+def synchronize_data(data, dy,window_size=100):
+    #if
+    #data = np.load(data_path, allow_pickle=True)
+    #dy = y_microns[0,:]-y_microns[1,:]
+    cam_start, cam_stop = get_cam_move_lims(dy)
+    cam_start += 5
+    cam_stop += -2
+    psd_start, psd_stop = get_limits_PSD(data)
+    # TODO add the tilt to the analysis
+
+    X_data, Y_data, X_data_A, Y_data_A, X_data_B, Y_data_B = prepare_plot_data(data,Window_size=window_size,start=psd_start,stop=psd_stop, shorten=True)
+    print(cam_start,cam_stop, len(dy))
+    cam_data_pos = -resample_signal(dy[cam_start:cam_stop],len(X_data))
+    return cam_data_pos, Y_data
+
+def check_tracking(path,fac,threshold,checked_indices=[0,1,2]):
+
+    generator = npy_generator(path)
+    for idx, image in enumerate(generator):
+        if idx in checked_indices:
+            plot_prediction(image,fac=fac,threshold=threshold)
+        if image is None:
+            break
+
+def plot_prediction(image,fac=1,threshold=200):
+    start = time()
+    x,y,_  = get_torch_prediction(model,image,fac=fac,threshold=threshold)
+    stop = time()
+    print(f"Prediction time was {stop-start} s")
+
+    # Display normal image
+    plt.figure(figsize=(15, 5))
+    plt.subplot(1,3,1)
+    plt.title("Input Image")
+    plt.imshow(image, cmap='gray')
+    plt.plot(fac*np.array(x),fac*np.array(y),'*r')
+    # Display segmentation
+    plt.subplot(1,3,2)
+    plt.imshow(_)#resulting_image[0,0,:,:]>150)
+    plt.colorbar()
+    plt.subplot(1,3,3)
+    plt.imshow(_>threshold)#resulting_image[0,0,:,:]>150)
+    plt.plot(x,y,'*r')
+    plt.title(f"Segmentation no ")
+    plt.show()
+
+
+def get_standard_torch_network_and_deveice():
+    device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+    print(f"Using GPU {torch.cuda.is_available()}/nDevice name: {torch.cuda.get_device_name(0)}")
+
+    model = UNet(
+        input_shape=(1, 1, 256, 256),
+        number_of_output_channels=1,  # 2 for binary segmentation and 3 for multiclass segmentation
+        #conv_layer_dimensions=(8, 16, 32, 64, 128, 256),  # smaller UNet (faster training)
+        conv_layer_dimensions=(64, 128, 256, 512, 1024),  # standard UNet
+
+    )
+    # fac=1.6 , threshold=40 # Typically good values
+    model_path = "../NetworkTraining/" +"TorchBigmodelJune_1"
+
+    model.load_state_dict(torch.load(model_path))
+    model.to(device)
+    return model, device
+
+def get_torch_prediction(model, image, fac=4, threshold=150):
+
+    new_size = [int(np.shape(image)[1]/fac),int(np.shape(image)[0]/fac)]
+    rescaled_image = cv2.resize(image, dsize=new_size, interpolation=cv2.INTER_CUBIC)
+    s = np.shape(rescaled_image)
+    rescaled_image = rescaled_image[:s[0]-s[0]%32, :s[1]-s[1]%32]
+    # TODO do more of this in pytorch which is faster since it works on GPU
+    rescaled_image = np.float32(np.reshape(rescaled_image,[1,1,np.shape(rescaled_image)[0],np.shape(rescaled_image)[1]]))
+    with torch.no_grad():
+        predicted_image = model(torch.tensor(rescaled_image).to(device))
+    resulting_image = predicted_image.detach().cpu().numpy()
+    x,y,_ = fpt.find_particle_centers(np.array(resulting_image[0,0,:,:]), threshold, particle_size_threshold=600)
+    
+    return x, y, resulting_image[0,0,:,:]
+
+def avi_frame_generator(video_path):
+    # Initialize the video capture object
+    cap = cv2.VideoCapture(video_path)
+
+    # Check if the video capture object has been successfully initialized
+    if not cap.isOpened():
+        print("Error: Could not open video file.")
+        yield None
+        return
+
+    # Loop through the video frames
+    while True:
+        ret, frame = cap.read()
+
+        if not ret:
+            # No more frames to read
+            break
+
+        yield frame[:,:,0]
+
+    # Release the video capture object
+    cap.release()
+
+    # Indicate end of video stream
+    yield None
 
 def fixed_window_avg(data, window_size):
     if window_size < 1:
@@ -355,18 +526,18 @@ def prepare_plot_data(data,Window_size=10,start=600_000,stop=700_000, shorten=Fa
 
     X_data_A = analysis_func(data['PSD_A_P_Y'][start:stop]/data['PSD_A_P_sum'][start:stop], window_size=Window_size)
     Y_data_A = analysis_func(data['PSD_A_F_Y'][start:stop], window_size=Window_size)
-    Y_data_A -= np.min(Y_data_A)
+    # Y_data_A -= np.min(Y_data_A)
     Y_data_A *= AFY_conversion
 
     X_data_B = analysis_func(data['PSD_B_P_Y'][start:stop]/data['PSD_B_P_sum'][start:stop], window_size=Window_size)
     Y_data_B = analysis_func(data['PSD_B_F_Y'][start:stop], window_size=Window_size)
-    Y_data_B -= np.min(Y_data_B)
+    # Y_data_B -= np.min(Y_data_B)
     Y_data_B *= BFY_conversion
 
     X_data_A *= psd_to_pos[0]
-    X_data_A -= np.min(X_data_A)
+    # X_data_A -= np.min(X_data_A)
     X_data_B *= psd_to_pos[1]
-    X_data_B -= np.min(X_data_B)
+    # X_data_B -= np.min(X_data_B)
     X_data = np.array(X_data_A + X_data_B)/2
     Y_data = Y_data_A + Y_data_B
     return X_data, Y_data, X_data_A, Y_data_A, X_data_B, Y_data_B

@@ -84,15 +84,16 @@ def default_c_p():
                             'message', # Note how this is handled affects what number you get out.
 
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos'],
-
+            # These are the channels which are sampled once per sample cycle. Default 
             'single_sample_channels':[
                             # TODO make this a part of the data_Channels class. e.g sampling rate parameter
                             'Motor_x_pos', 'Motor_y_pos', 'Motor_z_pos',
-                            'message', # TODO fix message, actually saved force here
+                            'message', # This is used for debugging, i.e sending data from the controller to the computer
+                            # for testing purposes.
                             'dac_ax','dac_ay','dac_bx','dac_by',
                             'PSD_Force_A_saved',
             ],
-
+            # These channels are sampled multiple times per sample cycle.
             'multi_sample_channels':[
                             'PSD_A_P_X', 'PSD_A_P_Y', 'PSD_A_P_sum',
                             'PSD_A_F_X', 'PSD_A_F_Y', 'PSD_A_F_sum',
@@ -101,7 +102,7 @@ def default_c_p():
                             'Photodiode_A','Photodiode_B',
                             'T_time','Time_micros_low','Time_micros_high', # Moved this up
                             ],
-
+            # These channels have values calculated from the "mulit sample channels" (i.e force converted from PSD reading)
             'derived_PSD_channels': ['F_A_X','F_A_Y','F_B_X','F_B_Y','F_A_Z','F_B_Z',
                                      'F_total_X','F_total_Y','F_total_Z',
                                      'Position_A_X', 'Position_A_Y','Position_B_X','Position_B_Y',
@@ -121,33 +122,50 @@ def default_c_p():
            # Deep learning tracking
            'network': None,
            'tracking_on': False,
-           'prescale_factor': 1, # Factor with which the image is to be prescaled before doing the tracking/traing
+           'z-tracking': False,
+           'crop_width': 64,
+           'prescale_factor': 1.5, # Factor with which the image is to be prescaled before doing the tracking/traing
            'alpha': 1,
            'cutoff': 0.9995,
            'train_new_model': False,
            'model':None,
+           'z-model':None,
            'device': None, # Pytorch device on which the model runs
            'training_image': np.zeros([64,64]),
            'epochs': 30,
            'epochs_trained': 0,
            'predicted_particle_positions': np.array([]),
+           'z-predictions': np.array([]),
            'particle_prediction_made': False,
-
+           'default_unet_path': "NeuralNetworks\TorchBigmodelJune_1",
+           'default_z_model_path': "NeuralNetworks\Z_model_large_range.pth",
 
             # Autocontroller parameters
             'centering_on': False,
             'trap_particle': False,
-            'search_and_trap': False,
-            'laser_position': [2660, 1502.3255814], #[1520,1830], # Default
-            'locate_pippette': False, # TODO fix speling error
+            'particle_in_pipette': False,
+            'search_and_trap': False,# TODO clean up the laser position parameters
+            'focus_z_trap_pipette': False, # Focus the particle in the trap with the one in the pipette
+            'laser_position_A': [2660, 1502.3255814], #[1520,1830], # Default
+            'laser_position_B': [2660, 1502.3255814], #[1520,1830], # Default
+            'laser_position_A_predicted': [2660, 1502.3255814],
+            'laser_position_B_predicted': [2660, 1502.3255814],
+            'laser_position': [2660, 1502.3255814], # Updated as the average of position A and B
+            # Laser a approximate x position is lpx = laser_a_transfer_matrix[0]*psd_a_x + laser_a_transfer_matrix[1]*psd_a_y
+            'laser_a_transfer_matrix': np.array([-0.00082831, 0.00013445, -0.00020288, -0.00105998]),
+            'laser_b_transfer_matrix': np.array([ 8.03026858e-04, 5.70465993e-05,  2.76983717e-05, -8.77370335e-04]), # 
+            'z-threshold': 8, # Threshold for the z-tracking
+            'locate_pipette': False, # TODO fix speling error
             'pipette_location': [0,0], # Location of the pipette in the image
             'pipette_location_chamber': [0,0,0], # Location of the pipette in the chamber
             'pipette_located': False,
             'center_pipette': False,
+            'move2area_above_pipette': False,
             'move_avoiding_particles': False,
             'find_laser_position': False, # Updates the laser position to the current closest particle
             'AD_tube_position': [0,0,0], # Position of the AD tube in the chamber, motor coordinates
-            'pipette_particle_location': [1200,1200], # Location of the pipette particle in the image
+            'Trapped_particle_position': [0,0,0], # Position of the trapped particle in the image
+            'pipette_particle_location': [1200,1200,0], # Location of the pipette particle in the image
             'attach_DNA_automatically': False,
 
             # Minitweezers controller parameters
@@ -203,6 +221,7 @@ def default_c_p():
            'motor_travel_speed': [2_000,2_000], # 5000 was somewhat high Speed of move to location.
            'move_to_location': False, # Should the motors move to a location rather than listen to the speed?
            'ticks_per_micron': 6.24,#24.45, # How many ticks per micron
+           'microns_per_tick': 1/6.24, #0.0408, # How many microns per tick
            'ticks_per_pixel': 6.24/18.28, #1.337, # How many pixels per micron
             # TODO add a fix to when the controller is disconnected.
 
@@ -295,98 +314,6 @@ class DataChannel:
         else:
             last = (nbr_points * spacing + start) % self.max_len
             return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
-    """
-    def get_data_spaced(self, nbr_points, spacing=1):
-        # Updated this to include the last index correctly.
-        nbr_points = min(nbr_points, int(self.max_retrivable/spacing))
-        final = self.index
-        start = final - ((nbr_points-1) * spacing)
-        if start >= 0:
-            return self.data[start:final+1:spacing]
-        else:
-            last = (nbr_points * spacing + start) % self.max_len
-            return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
-
-    def get_data_spaced(self, nbr_points, spacing=1):
-        nbr_points = min(nbr_points, self.max_retrivable)
-        final = self.index + 1  # +1 to make sure the final index is included
-        start = final - (nbr_points - 1) * spacing - 1  # Calculate start based on nbr_points and spacing
-
-        # Make sure the start index is within bounds
-        if start >= 0:
-            return self.data[start:final:spacing]
-        else:
-            # Handle the case where start is negative
-            last = (nbr_points * spacing + start) % self.max_len
-            return np.concatenate([self.data[start::spacing], self.data[:last:spacing]])
-    """
-
-"""
-@dataclass
-class DataChannel:
-# Works fine and equally fast as the other one.
-    name: str
-    unit: str
-    data: np.array
-    saving_toggled: bool = True
-    max_len: int = 10_000_000 # 10_000_000 default
-    index: int = 1
-    full: bool = False
-    max_retrivable: int = 1
-
-    def put_data(self, d):
-        try:
-            if len(d) > self.max_len:
-                return
-        except TypeError:
-            d = [d]
-        if len(self.data) < self.max_len:
-            tmp = np.zeros(self.max_len)
-            tmp[:len(self.data)] = self.data
-            self.index = len(self.data)
-            self.data = tmp
-
-        if self.index+len(d) < self.max_len:
-            self.data[self.index:self.index+len(d)] = d
-            self.index += len(d)
-            if not self.full:
-                self.max_retrivable = self.index
-        else:
-            end_points = self.max_len - self.index
-            self.data[-end_points:] = d[:end_points]
-            self.index = len(d) - end_points
-            self.data[:self.index] = d[end_points:]
-            self.full = True
-            self.max_retrivable = self.max_len
-
-        if self.index == self.max_len:  # Added this line
-            self.index = 0
-
-    def get_data(self, nbr_points):
-        nbr_points = min(nbr_points, self.max_retrivable)
-        diff = self.index-nbr_points
-        if diff >= 0:
-            ret = self.data[self.index-nbr_points:self.index]
-        else:
-            ret = np.concatenate([self.data[diff:], self.data[:self.index]]).ravel()
-        if not len(ret) == nbr_points:
-            print("Error lengths of data is", len(ret), nbr_points, len(self.data))
-            return None
-        return ret
-
-    def get_data_spaced(self, nbr_points, spacing=1):
-        nbr_points = min(nbr_points, self.max_retrivable)
-        diff = self.index-nbr_points
-        final = self.index
-        start = final - (final % spacing) - (nbr_points * spacing)
-        if diff > 0:
-            ret = self.data[start:final:spacing]
-        else:
-            last = (nbr_points * spacing + start) % self.max_len  # Updated calculation for last
-            ret = np.concatenate([self.data[start::spacing], self.data[:last:spacing]]).ravel()
-
-        return ret
-"""
 
 def get_data_dicitonary_new():
     data = [

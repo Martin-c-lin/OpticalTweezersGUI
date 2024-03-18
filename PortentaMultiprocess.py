@@ -139,54 +139,8 @@ class PortentaComms(Thread):
         """
         Prepares data for sending to the portenta.
         """
-        """
+        
         # Start bytes for the portenta
-        self.outdata[0:2] = [123, 123]
-
-        # Send the target position and speed
-        for i in range(3):
-            self.outdata[2 + i * 2] = max(self.c_p['minitweezers_target_pos'][i] >> 8, 0)
-            self.outdata[3 + i * 2] = max(self.c_p['minitweezers_target_pos'][i] & 0xFF, 0)
-            self.outdata[8 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) >> 8
-            self.outdata[9 + i * 2] = (self.c_p[f'motor_{["x", "y", "z"][i]}_target_speed'] + 32768) & 0xFF
-
-        # Send the piezo voltages
-        for i in range(2):
-            self.outdata[14 + i * 2] = self.c_p['piezo_A'][i] >> 8
-            self.outdata[15 + i * 2] = self.c_p['piezo_A'][i] & 0xFF
-            self.outdata[18 + i * 2] = self.c_p['piezo_B'][i] >> 8
-            self.outdata[19 + i * 2] = self.c_p['piezo_B'][i] & 0xFF
-        #print(self.outdata[14:21]) Correct
-        self.outdata[22] = self.c_p['motor_travel_speed'][0] >> 8
-        self.outdata[23] = self.c_p['motor_travel_speed'][0] & 0xFF
-        self.outdata[24] = self.c_p['portenta_command_1']
-        self.c_p['portenta_command_1'] = 0
-        self.outdata[25] = self.c_p['portenta_command_2']
-        # End bytes for the portenta
-        self.outdata[26] = self.c_p['PSD_means'][0] >> 8
-        self.outdata[27] = self.c_p['PSD_means'][0] & 0xFF
-        self.outdata[28] = self.c_p['PSD_means'][1] >> 8
-        self.outdata[29] = self.c_p['PSD_means'][1] & 0xFF
-
-        self.outdata[30] = self.c_p['PSD_means'][2] >> 8
-        self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
-        self.outdata[32] = self.c_p['PSD_means'][3] >> 8
-        self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
-
-        self.outdata[34] = self.c_p['blue_led']
-
-        self.outdata[35:] = self.c_p['protocol_data']
-        try:
-            self.serial_channel.write(self.outdata)
-        except serial.serialutil.SerialTimeoutException as e:
-            pass
-        except serial.serialutil.SerialException as e:
-            print(f"Serial exception: {e}")
-            self.serial_channel = None
-            self.c_p['minitweezers_connected'] = False
-        """
-
-                # Start bytes for the portenta
         self.outdata[0:2] = [123, 123]
 
         # Send the target position and speed
@@ -219,6 +173,7 @@ class PortentaComms(Thread):
             self.outdata[31] = self.c_p['PSD_means'][2] & 0xFF
             self.outdata[32] = self.c_p['PSD_means'][3] >> 8
             self.outdata[33] = self.c_p['PSD_means'][3] & 0xFF
+            print("Sent zeroing data")
 
         if self.c_p['portenta_command_1'] == 3:
             # Sends the calibration data. I.e force conversion factors
@@ -289,8 +244,24 @@ class PortentaComms(Thread):
         self.data_channels['F_total_Y'].put_data(self.data_channels['F_A_Y'].get_data(chunk_length) + self.data_channels['F_B_Y'].get_data(chunk_length))
         self.data_channels['F_total_Z'].put_data(self.data_channels['F_A_Z'].get_data(chunk_length) + self.data_channels['F_B_Z'].get_data(chunk_length))
 
-    def calc_speeds(self, chunk_length):
-        pass
+    def calc_speeds(self, chunk_length, diff = 5):
+        # TODO change to microns instead of ticks
+        if self.data_channels['Motor_x_pos'].max_retrivable<chunk_length+diff:
+            self.data_channels['Motor_x_speed'].put_data(np.zeros(self.data_channels['Motor_x_pos'].max_retrivable))
+            self.data_channels['Motor_y_speed'].put_data(np.zeros(self.data_channels['Motor_y_pos'].max_retrivable))
+            self.data_channels['Motor_z_speed'].put_data(np.zeros(self.data_channels['Motor_z_pos'].max_retrivable))
+            return
+        x_data = self.data_channels['Motor_x_pos'].get_data(chunk_length+diff)
+        y_data = self.data_channels['Motor_y_pos'].get_data(chunk_length+diff)
+        z_data = self.data_channels['Motor_z_pos'].get_data(chunk_length+diff)
+        time_data = self.data_channels['Motor time'].get_data(chunk_length+diff)
+        dx = -(x_data[diff:] - x_data[:-diff])
+        dy = -(y_data[diff:] - y_data[:-diff])
+        dz = -(z_data[diff:] - z_data[:-diff])
+        dt = -(time_data[diff:] - time_data[:-diff])*1e-6 # Conveting to seconds here
+        self.data_channels['Motor_x_speed'].put_data(self.c_p['microns_per_tick']*dx/dt)
+        self.data_channels['Motor_y_speed'].put_data(self.c_p['microns_per_tick']*dy/dt)
+        self.data_channels['Motor_z_speed'].put_data(self.c_p['microns_per_tick']*dz/dt)
 
 
     def read_data(self):
@@ -328,7 +299,7 @@ class PortentaComms(Thread):
             if channel in self.c_p['offset_channels']:
                 data -= 32768
             self.data_channels[channel].put_data(data)
-        data_length = len(data)
+        data_length_single = len(data)
 
         # Compute starts and stops once
         base_starts = zero_offset + np.arange(nbr_chunks) * chunk_length
@@ -357,48 +328,8 @@ class PortentaComms(Thread):
         self.calc_true_powers(data_length)
         self.calc_forces(data_length)
         self.calc_speeds(data_length)
+        self.calc_speeds(data_length_single, diff=5)
 
-    """
-    def move_to_location(self):
-        # TODO This should be done in a different thread maybe.
-        dist_x = self.c_p['minitweezers_target_pos'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
-        dist_y = self.c_p['minitweezers_target_pos'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
-        dist_z = self.c_p['minitweezers_target_pos'][2] - self.data_channels['Motor_z_pos'].get_data(1)[0]
-
-        # Adjust speed depending on how far we are going
-        if dist_x**2 >10_000:
-            self.c_p['motor_travel_speed'][0] = 25000
-        else:
-            self.c_p['motor_travel_speed'][0] = 1500
-
-        if dist_y**2 >10_000:
-            self.c_p['motor_travel_speed'][1] = 25000
-        else:
-            self.c_p['motor_travel_speed'][1] = 1500
-
-        # Changed the signs of this function
-        if dist_x**2>100:
-            self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'][0] if dist_x > 0 else self.c_p['motor_travel_speed'][0]
-        else:
-            self.c_p['motor_x_target_speed'] = 0
-
-        if dist_y**2>100:
-            self.c_p['motor_y_target_speed'] = self.c_p['motor_travel_speed'][1] if dist_y > 0 else -self.c_p['motor_travel_speed'][1]
-        else:
-            self.c_p['motor_y_target_speed'] = 0
-        
-        # Z movement is dangerous, wait with that.
-        if dist_z**2>100:
-            self.c_p['motor_z_target_speed'] = -self.c_p['motor_travel_speed'] if dist_z > 0 else self.c_p['motor_travel_speed']
-        else:
-            self.c_p['motor_z_target_speed'] = 0
-        
-        if dist_x**2+dist_y**2<200:
-            self.c_p['motor_x_target_speed'] = 0
-            self.c_p['motor_y_target_speed'] = 0
-            self.c_p['motor_z_target_speed'] = 0
-            self.c_p['move_to_location'] = False
-    """
     def move_to_location(self):
         dist_x = self.c_p['minitweezers_target_pos'][0] - self.data_channels['Motor_x_pos'].get_data(1)[0]
         dist_y = self.c_p['minitweezers_target_pos'][1] - self.data_channels['Motor_y_pos'].get_data(1)[0]
@@ -411,33 +342,33 @@ class PortentaComms(Thread):
         elif dist_x**2 >40_000:
             self.c_p['motor_travel_speed'][0] = 1500
         else:
-            self.c_p['motor_travel_speed'][0] = 500 # Changed from 1500
+            self.c_p['motor_travel_speed'][0] = 400 # Changed from 1500
 
         if dist_y**2 >100_000:
             self.c_p['motor_travel_speed'][1] = 25000
         elif dist_y**2 >40_000:
             self.c_p['motor_travel_speed'][1] = 1500
         else:
-            self.c_p['motor_travel_speed'][1] = 500 #changed from 1500
+            self.c_p['motor_travel_speed'][1] = 400 #changed from 1500
 
         # Changed the signs of this function
-        if dist_x**2>100:
+        if dist_x**2>10:
             self.c_p['motor_x_target_speed'] = -self.c_p['motor_travel_speed'][0] if dist_x > 0 else self.c_p['motor_travel_speed'][0]
         else:
             self.c_p['motor_x_target_speed'] = 0
 
-        if dist_y**2>100:
+        if dist_y**2>10:
             self.c_p['motor_y_target_speed'] = self.c_p['motor_travel_speed'][1] if dist_y > 0 else -self.c_p['motor_travel_speed'][1]
         else:
             self.c_p['motor_y_target_speed'] = 0
-        """
-        # Z movement is dangerous, wait with that.
-        if dist_z**2>100:
-            self.c_p['motor_z_target_speed'] = -self.c_p['motor_travel_speed'] if dist_z > 0 else self.c_p['motor_travel_speed']
+        
+        # Z movement is dangerous, test carfully
+        if dist_z**2>5:
+            self.c_p['motor_z_target_speed'] = 300 if dist_z > 0 else -300 # Cannot allow high speeds here
         else:
             self.c_p['motor_z_target_speed'] = 0
-        """
-        if dist_x**2+dist_y**2<200:
+        
+        if dist_x**2+dist_y**2<20 and dist_z**2<5:
             self.c_p['motor_x_target_speed'] = 0
             self.c_p['motor_y_target_speed'] = 0
             self.c_p['motor_z_target_speed'] = 0

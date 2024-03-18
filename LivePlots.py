@@ -297,6 +297,9 @@ class PlotWindow(QMainWindow):
         # TODO,have better default plots.
         self.data_lines.append(self.graphWidget.plot(self.x, self.y, pen=pen, name='plot 0'))
 
+        self.data_point_markers = []
+        self.data_point_markers.append(self.graphWidget.plot(self.x, self.y, pen=pen, name='plot 0'))
+
         self.timer = QTimer()
         self.timer.setInterval(50) # sets the fps of the timer
         self.timer.timeout.connect(self.update_plot_data)
@@ -412,8 +415,9 @@ class PlotWindow(QMainWindow):
         pen = pg.mkPen(color=Colors[key]) # Default color
         # TODO add also symbols here so that also they are saved.
         self.plot_data['pen'].append(pen)
-        plot_name = f" {xname} vs {yname}"
-        self.data_lines.append(self.graphWidget.plot(self.x, self.y, name=plot_name,pen=pen) )
+        plot_name = f"{xname} vs {yname} - plot {len(self.data_lines)}"
+        self.data_lines.append(self.graphWidget.plot(self.x, self.y, name=plot_name,pen=pen, autoDownsample=True) ) # Added auto downsample to improve performance
+        self.data_point_markers.append(self.graphWidget.plot(self.x, self.y, pen=pen, symbol='o', symbolPen=pen, symbolBrush=Colors[key]))
         self.menu.clear()
         self.create_plot_menus()
         self.set_axis_labels()
@@ -426,8 +430,11 @@ class PlotWindow(QMainWindow):
         self.plot_data['averaging'].pop(plot_idx)
 
         self.data_lines[plot_idx].setVisible(False)
+        self.data_point_markers[plot_idx].setVisible(False)
         self.graphWidget.removeItem(self.data_lines[plot_idx])
+        self.graphWidget.removeItem(self.data_point_markers[plot_idx])
         self.data_lines.pop(plot_idx)
+        self.data_point_markers.pop(plot_idx)
 
         self.plot_data['L'] = np.delete(self.plot_data['L'], int(plot_idx))
         self.plot_data['sub_sample'] = np.delete(self.plot_data['sub_sample'], int(plot_idx))
@@ -436,6 +443,8 @@ class PlotWindow(QMainWindow):
         self.menu.clear()
         self.create_plot_menus()
         self.color_idx -= 1
+        for idx, line in enumerate(self.data_lines):
+            self.set_plot_name(idx, None)
 
     def create_plot_menus(self):
         # Add menu
@@ -497,7 +506,15 @@ class PlotWindow(QMainWindow):
                 set_symbol.setStatusTip("Select symbol")
                 set_symbol.triggered.connect(symbol_command)
                 plot_symbol_submenu.addAction(set_symbol)
-            # Maybe add sliders for marker sizes
+
+            # Add submenu for marker symbols
+            marker_symbol_submenu = Plot_1_menu.addMenu("Marker symbol")
+            for symbol in Symbols:
+                symbol_command = partial(self.set_marker_symbol, idx, symbol)
+                set_symbol = QAction(Symbols[symbol], self)
+                set_symbol.setStatusTip("Select marker symbol")
+                set_symbol.triggered.connect(symbol_command)
+                marker_symbol_submenu.addAction(set_symbol)
 
             # Add option to remove this plot specifically
             remove_plot_action = QAction("Remove plot", self)
@@ -532,6 +549,12 @@ class PlotWindow(QMainWindow):
         # TODO save symbol as well
         try:
             self.data_lines[plot_idx].setSymbol(symbol)
+        except Exception as E:
+            print(E)
+
+    def set_marker_symbol(self, plot_idx,symbol):
+        try:
+            self.data_point_markers[plot_idx].setSymbol(symbol)
         except Exception as E:
             print(E)
 
@@ -583,40 +606,14 @@ class PlotWindow(QMainWindow):
 
                     m_l = min(len(x_data), len(y_data))
                     self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
-                    self.data_lines[idx].setPen(self.plot_data['pen'][idx]) # TODO check if needed
+                    #self.data_lines[idx].setPen(self.plot_data['pen'][idx]) # TODO check if needed, was not
+                    self.data_point_markers[idx].setData([x_data[-1]], [y_data[-1]])
 
                 except Exception as e:
                     print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
                     print('Plotting error:', e)
 
-    """
-    def update_plot_data(self):
-        # If the program has closed then we should also close this window
-        if self.plot_running:
-            for idx in range(len(self.data_lines)):# enumerate(self.plot_data['x']):
-                x_key = self.plot_data['x'][idx]
-                y_key = self.plot_data['y'][idx]
-                L = int(self.plot_data['L'][idx])
-                S = int(self.plot_data['sub_sample'][idx])
 
-                try:
-                    if self.plot_data['averaging'][idx]:
-                        # TODO maybe add option to not average both signals...
-                        x_data = self.non_overlapping_average(self.data[x_key].get_data(L), S)
-                        y_data = self.non_overlapping_average(self.data[y_key].get_data(L), S)                        
-                    else:
-                        nbr_elements = int(L/S)
-                        x_data = self.data[x_key].get_data_spaced(nbr_elements, S)
-                        y_data = self.data[y_key].get_data_spaced(nbr_elements, S)
-
-                    m_l = min(len(x_data), len(y_data))
-                    self.data_lines[idx].setData(x_data[0:m_l], y_data[0:m_l])
-                    self.data_lines[idx].setPen(self.plot_data['pen'][idx]) # TODO check if needed
-
-                except Exception as e:
-                    print(x_key, y_key,idx,len(self.data_lines), len(self.plot_data['x']),len(self.plot_data['y']))
-                    print('Plotting error:', e)
-    """
     def non_overlapping_average(self, signal, N):
         # Calculate the number of chunks
         num_chunks = len(signal) // N
@@ -642,10 +639,18 @@ class PlotWindow(QMainWindow):
 
     def set_symbol_color(self, color, idx):
         pen = pg.mkPen(color=color)
+
+        marker = self.data_point_markers[idx]
+        marker.setSymbolPen(pen)
+        marker.setSymbolBrush(color)
+
         line = self.data_lines[idx]
         line.setSymbolPen(pen)
         line.setSymbolBrush(color) # Can be used to set the symbol color
         # todo TEST AND SEE if we need to save the pen.
+
+
+    # TODO add marker size option
 
     def set_plot_color(self, color, idx):
         pen = pg.mkPen(color=color)
@@ -656,6 +661,14 @@ class PlotWindow(QMainWindow):
             self.plot_data['pen'].append(pen)
             return
         self.plot_data['pen'][idx] = pen
+
+    def set_plot_name(self, idx, name):
+        # Not tested yet
+        if name is not None:
+            self.data_lines[idx].name = name
+            return
+        plot_name = f"Plot {idx}: {self.plot_data['x'][idx]} vs {self.plot_data['y'][idx]}"
+        self.data_lines[idx].name = plot_name
         
     def set_x_data(self, idx, x_data):
         self.plot_data['x'][idx] = x_data
@@ -670,7 +683,7 @@ class PlotWindow(QMainWindow):
         self.plot_data['y'][idx] = y_data
         plot_name = f" {self.plot_data['x'][idx]} vs {y_data}"
         self.graphWidget.removeItem(self.data_lines[idx])
-        self.data_lines[idx] = self.graphWidget.plot(self.x, self.y,name=plot_name,
+        self.data_lines[idx] = self.graphWidget.plot(self.x, self.y, name=plot_name,
                                                      pen=self.plot_data['pen'][idx])
         self.set_axis_labels()
 

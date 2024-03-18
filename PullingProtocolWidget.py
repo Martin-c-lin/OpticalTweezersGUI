@@ -1,4 +1,4 @@
-from PyQt6.QtWidgets import QVBoxLayout, QLabel, QSpinBox, QWidget, QApplication, QPushButton
+from PyQt6.QtWidgets import QVBoxLayout, QLabel, QSpinBox, QWidget, QApplication, QPushButton, QComboBox
 
 from PyQt6.QtCore import Qt
 
@@ -24,6 +24,7 @@ class PullingProtocolWidget(QWidget):
         self.data_channels = data_channels
         # TODO handle the different piezos and how they are shared in a better way.
         # Maybe have all the controls in the same widget?
+        self.protocol_axis_index = 4 # AX=1, AY=2, BX=3, BY=4, BY default
         self.updateParameters()  # Initial update
 
     def initUI(self):
@@ -57,7 +58,18 @@ class PullingProtocolWidget(QWidget):
         self.toggleProtocolButton.clicked.connect(self.toggleProtocol)
         self.toggleProtocolButton.setCheckable(True)
         self.toggleProtocolButton.setChecked(self.c_p['protocol_data'][0])
+        self.toggleProtocolButton.setToolTip("Toggle the constant speed protocol on/off. \n NOTE: You cannot control either piezo manually when a protocol is running!")
         layout.addWidget(self.toggleProtocolButton)
+
+        self.axisComboBox = QComboBox()
+        self.axisComboBox.addItem("A-X")
+        self.axisComboBox.addItem("A-Y")
+        self.axisComboBox.addItem("B-X")
+        self.axisComboBox.addItem("B-Y")
+        self.axisComboBox.setCurrentIndex(4)
+        self.axisComboBox.currentIndexChanged.connect(self.selectProtocolAxis)
+        layout.addWidget(QLabel("Select axis:"))
+        layout.addWidget(self.axisComboBox)
 
         self.setLayout(layout)
 
@@ -78,15 +90,22 @@ class PullingProtocolWidget(QWidget):
 
     def updateParameters(self):
         lower_limit, upper_limit, step_size = self.getParametersAs8BitArrays()
-        #print(f"Lower Limit: {lower_limit}, Upper Limit: {upper_limit}, Step Size: {step_size}")
         self.c_p['protocol_data'][1:3] = upper_limit
         self.c_p['protocol_data'][3:5] = lower_limit
         self.c_p['protocol_data'][5:7] = step_size
-        #print(f"Protocol data: {self.c_p['protocol_data']}")
+
+    def selectProtocolAxis(self, index):
+        self.protocol_axis_index = index + 1
+        
 
     def toggleProtocol(self):
-        self.c_p['protocol_data'][0] = 1 - self.c_p['protocol_data'][0]
-        #print(f"Protocol toggled to {self.c_p['protocol_data'][0]}")
+        if self.toggleProtocolButton.isChecked():
+            self.c_p['protocol_data'][0] = self.protocol_axis_index
+            print(f"Command 2 is {self.c_p['portenta_command_2']}")
+        else:
+            self.c_p['protocol_data'][0] = 0
+        
+        # If we are turning of the protocol then we should update the values of the piezo sliders.
         if self.c_p['protocol_data'][0] == 0:
             self.c_p['piezo_A'] = np.int32([self.data_channels['dac_ax'].get_data_spaced(1)[0],
                                             self.data_channels['dac_ay'].get_data_spaced(1)[0]])

@@ -16,17 +16,21 @@ from PyQt6.QtWidgets import (
 )
 
 from PyQt6.QtCore import Qt, QThread, pyqtSignal, pyqtSlot, QRunnable, QObject, QPoint, QRect, QTimer
-from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen, QIntValidator, QKeySequence
+from PyQt6.QtGui import QPixmap, QImage, QPainter, QBrush, QColor, QAction, QDoubleValidator, QPen, QIntValidator, QKeySequence, QFont
 
-from pyqtgraph import PlotWidget, plot
-import pyqtgraph as pg
+# from pyqtgraph import PlotWidget, plot
+# import pyqtgraph as pg
 from random import randint
 import numpy as np
 from time import sleep
 from functools import partial
 # TODO remove the things that are not used for the minitweezers such as the thorlabs motors!
 import BaslerCameras
-import ThorlabsCameras
+#import ThorlabsCameras # Chrashed upon opening the filemenu when this was not here.
+#import clr
+import win32com.client as win32  # For reasons this needs to be here for the filmenu to work (as tested on windows).
+
+
 from CameraControlsNew import CameraThread, VideoWriterThread, CameraClicks
 from ControlParameters import default_c_p, get_data_dicitonary_new
 from TemperatureControllerTED4015 import TemperatureThread
@@ -37,10 +41,10 @@ import MotorControlWidget
 from QWidgetDockContainer import QWidgetWindowDocker
 from LaserPiezosControlWidget import LaserPiezoWidget, MinitweezersLaserMove
 from CameraMeasurementTool import CameraMeasurements
-from DeepLearningThread import DeepLearningAnalyserLDS, DeepLearningControlWidget
+from DeepLearningThread import DeepLearningAnalyserLDS, DeepLearningControlWidget, ParticleCNN # TODO load it in a nicer way
 from PlanktonViewWidget import PlanktonViewer
 from DataChannelsInfoWindow import CurrentValueWindow
-# from ReadArduinoPortenta import PortentaComms
+from ReadArduinoPortenta import PortentaComms #For some reason we need to import this to be able to open the file explorer.
 from PortentaMultiprocess import PortentaComms
 
 from PullingProtocolWidget import PullingProtocolWidget
@@ -108,20 +112,50 @@ class Worker(QThread):
             self.data_channels['Z-position'].put_data(np.random.rand() * 2 - 1)
             self.data_channels['Motor_position'].put_data((self.data_channels['Time'].get_data(1) / 10) + np.random.rand())
 
-    def draw_particle_positions(self, centers, pen=None, radius=250):
+    def draw_particle_positions(self, centers, pen=None, radius=250, show_z_info=False):
         # TODO add function also for crosshair to help with alignment.
         rx = int(radius/self.c_p['image_scale'])
         ry = rx
+        font_size = int(rx/4)
+
+        # Create a QFont object with the desired font size
+        self.qp.setFont(QFont("Arial", font_size))
         if pen is None:
             self.qp.setPen(self.red_pen)
         else:
             self.qp.setPen(pen)
-        for pos in centers:
+        for idx, pos in enumerate(centers):
             x = int(pos[0]/ self.c_p['image_scale']) # Which is which?
             y = int(pos[1]/ self.c_p['image_scale'])
 
             self.qp.drawEllipse(x-int(rx/2)-1, y-int(ry/2)-1, rx, ry)
-    
+                    # Check if information display is enabled
+            if show_z_info:
+                # You can customize this part to show whatever information you want
+                # For example, showing the index of the particle or custom info passed in a list
+
+                # TODO make this more general as a particle info display.
+                try:
+                    if idx > len(self.c_p['z-predictions']) or len(self.c_p['z-predictions']) == 0:
+                        info_text = str(idx)
+                        continue
+                except TypeError:
+                    continue
+                try:
+                    info_text = str(round(10*self.c_p['z-predictions'][idx],3))
+
+                    # Position for the text: adjust the x, y as needed for text to not overlap the circle
+                    text_x = int(x +1.1*rx)
+                    text_y = int(y)
+
+                    # Draw the text
+                    self.qp.drawText(text_x, text_y, info_text)
+                except Exception as E:
+                    # There is an index errror here which is harmless, caused by a missing detection in the deep learning thread and a 
+                    # the image being updated too quickly for the predictions to catch on. 
+                    pass
+
+
     def preprocess_image(self):
 
         # Check if offset and gain should be applied.
@@ -200,11 +234,26 @@ class Worker(QThread):
             if self.c_p['central_circle_on']:
                 self.draw_central_circle()
             if self.c_p['tracking_on']:
-                self.draw_particle_positions(self.c_p['predicted_particle_positions'], radius=100)
-            if self.c_p['locate_pippette'] and self.c_p['pipette_location'][0] is not None:
+                self.draw_particle_positions(self.c_p['predicted_particle_positions'], radius=100, show_z_info=self.c_p['z-tracking'])
+                
+            if self.c_p['locate_pipette'] and self.c_p['pipette_location'][0] is not None:
                 green_pen = QPen()
                 green_pen.setColor(QColor('green'))
                 self.draw_particle_positions([self.c_p['pipette_location']], green_pen)
+            # Paint trapped particle
+            if self.data_channels['particle_trapped'].get_data(1)[0]:
+                gp = QPen()
+                gp.setColor(QColor('green'))
+                gp.setWidth(3)                
+                self.draw_particle_positions([self.c_p['Trapped_particle_position'][0:2]], radius=100, pen=gp)
+
+            if self.c_p['particle_in_pipette']:
+                tmp_pen = QPen()
+                tmp_pen.setColor(QColor('blue'))
+                tmp_pen.setWidth(3)
+                
+                self.draw_particle_positions([self.c_p['pipette_particle_location'][0:2]], radius=100, pen=tmp_pen)
+            
             self.qp.end()
             self.changePixmap.emit(picture)
 
@@ -277,11 +326,11 @@ class MainWindow(QMainWindow):
         W = int(1920/4)
         sleep(0.5)
         self.c_p['frame_size'] = int(self.c_p['camera_width']/2), int(self.c_p['camera_height']/2)
-        self.label = QLabel("Camera window")
-        self.label.setAlignment(Qt.AlignmentFlag.AlignTop)
-        self.setCentralWidget(self.label)
-        self.label.setMinimumSize(W,H)
-        self.painter = QPainter(self.label.pixmap())
+        self.camera_window_label = QLabel("Camera window")
+        self.camera_window_label.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.setCentralWidget(self.camera_window_label)
+        self.camera_window_label.setMinimumSize(W,H)
+        self.painter = QPainter(self.camera_window_label.pixmap())
         th = Worker(c_p=self.c_p, data=self.data_channels)
         th.changePixmap.connect(self.setImage)
         th.start()
@@ -315,12 +364,14 @@ class MainWindow(QMainWindow):
         self.LaserControllerDock = QWidgetWindowDocker(self.laserControllerWidget, "Laser controls")
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.LaserControllerDock)
 
-        self.pullingProtolWidget = PullingProtocolWidget(self.c_p, self)
+        self.pullingProtolWidget = PullingProtocolWidget(self.c_p, self.data_channels)
         self.pullingProtocolDock = QWidgetWindowDocker(self.pullingProtolWidget, "Pulling protocol")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.pullingProtocolDock)
+        #self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self.pullingProtocolDock)
 
         self.microfluidicsController = ElvesysMicrofluidicsController()
         self.microfluidicsController.connect(self.c_p['pump_adress'])
+
         self.MicrofludicsWidget = MicrofluidicsControllerWidget(self.c_p, self.microfluidicsController)
         self.MicrofludicsDock = QWidgetWindowDocker(self.MicrofludicsWidget, "Microfluidics controls")
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self.MicrofludicsDock)
@@ -330,7 +381,7 @@ class MainWindow(QMainWindow):
 
     @pyqtSlot(QImage)
     def setImage(self, image):
-        self.label.setPixmap(QPixmap.fromImage(image))
+        self.camera_window_label.setPixmap(QPixmap.fromImage(image))
 
     def start_threads(self):
         pass
@@ -455,6 +506,7 @@ class MainWindow(QMainWindow):
 
     def stop_saving(self):
         # TODO ensure that the there is no maximum limit on the filesize
+        # For instance by stopping, saving and making a new file. Not the most elegant solution but it should work.
         self.saving = False
         print("Saving stopped")
         self.stop_idx = self.data_channels['PSD_A_P_X'].index
@@ -535,7 +587,13 @@ class MainWindow(QMainWindow):
 
         for idx in range(len(self.c_p['saved_positions'])):
             self.add_position(idx)
-        
+
+        """
+        # TODO test this properly
+        self.delete_position_submenu = action_menu.addMenu("Delete saved positions")
+        for idx in range(len(self.c_p['saved_positions'])):
+            self.delete_positon_action(idx)
+        """
         # Todo add option to remove positions, set shortcut, move position etc.
         # self.remove_positions_submenu = action_menu.addMenu("Remove saved positions")
         def toggle_central_circle():
@@ -594,6 +652,17 @@ class MainWindow(QMainWindow):
         self.saved_positions_submenu.addAction(position_action) # Check how to remove this
         # TODO add a remove position option as well as rename and check position values.
 
+    def delete_positon_action(self, idx):
+        delete_command = partial(self.delete_position, idx)
+        delete_action = QAction(self.c_p['saved_positions'][idx][0], self)
+        delete_action.setStatusTip(f"Delete saved position {self.c_p['saved_positions'][idx][0]}")
+        delete_action.triggered.connect(delete_command)
+        self.delete_position_submenu.addAction(delete_action)
+
+    def delete_position(self, idx):
+
+        self.c_p['saved_positions'].pop(idx)
+
     def remove_position(self, idx):
         # Removes position from submenu
         pass
@@ -622,10 +691,12 @@ class MainWindow(QMainWindow):
         text, ok = QInputDialog.getText(self, 'Save position dialog', 'Enter name of position:')
         if ok:
             self.c_p['saved_positions'].append([text, x, y, z])
-            print(f"Saved position {x}, {y} as position: {text}")
+            print(f"Saved position {x}, {y} ,{z} as position: {text}")
             self.add_position(len(self.c_p['saved_positions'])-1)
         else:
             print("No position saved")
+
+
 
     def goto_position(self,idx):
         print(f"Moving to position {self.c_p['saved_positions'][idx][0]}")
@@ -642,7 +713,7 @@ class MainWindow(QMainWindow):
         if self.c_p['minitweezers_connected']:
             self.c_p['minitweezers_target_pos'][0] = int(self.c_p['saved_positions'][idx][1]) # Added +32768
             self.c_p['minitweezers_target_pos'][1] = int(self.c_p['saved_positions'][idx][2])
-            self.c_p['minitweezers_target_pos'][2] = int(self.c_p['saved_positions'][idx][3])
+            self.c_p['minitweezers_target_pos'][2] = int(self.c_p['saved_positions'][idx][3]) # TODO test if this works alright.
             self.c_p['move_to_location'] = True
         else:
             self.c_p['stepper_target_position'][0:2] = self.c_p['saved_positions'][idx][1:3]
@@ -829,20 +900,20 @@ class MainWindow(QMainWindow):
 
     def resize_image(self):
         # New code for it
-        current_size = self.label.size()
+        current_size = self.camera_window_label.size()
         width = current_size.width()
         height = current_size.height()
         self.c_p['frame_size'] = width, height
 
     def mouseMoveEvent(self, e):
-        self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
-        self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
+        self.c_p['mouse_params'][3] = e.pos().x()-self.camera_window_label.pos().x()
+        self.c_p['mouse_params'][4] = e.pos().y()-self.camera_window_label.pos().y()
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseMove()
 
     def mousePressEvent(self, e):
         
-        self.c_p['mouse_params'][1] = e.pos().x()-self.label.pos().x()
-        self.c_p['mouse_params'][2] = e.pos().y()-self.label.pos().y()
+        self.c_p['mouse_params'][1] = e.pos().x()-self.camera_window_label.pos().x()
+        self.c_p['mouse_params'][2] = e.pos().y()-self.camera_window_label.pos().y()
 
         if e.button() == Qt.MouseButton.LeftButton:
             self.c_p['mouse_params'][0] = 1
@@ -854,16 +925,16 @@ class MainWindow(QMainWindow):
 
     def mouseReleaseEvent(self, e):
 
-        self.c_p['mouse_params'][3] = e.pos().x()-self.label.pos().x()
-        self.c_p['mouse_params'][4] = e.pos().y()-self.label.pos().y()
+        self.c_p['mouse_params'][3] = e.pos().x()-self.camera_window_label.pos().x()
+        self.c_p['mouse_params'][4] = e.pos().y()-self.camera_window_label.pos().y()
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseRelease()
         self.c_p['mouse_params'][0] = 0
 
 
     def mouseDoubleClickEvent(self, e):
         # Double click to move center?
-        x = e.pos().x()-self.label.pos().x()
-        y = e.pos().y()-self.label.pos().y()
+        x = e.pos().x()-self.camera_window_label.pos().x()
+        y = e.pos().y()-self.camera_window_label.pos().y()
         print(x*self.c_p['image_scale'] ,y*self.c_p['image_scale'] )
         self.c_p['click_tools'][self.c_p['mouse_params'][5]].mouseDoubleClick()
 
